@@ -1,0 +1,9 @@
+node_modules/
+build/
+dist/
+
+# safety net: never commit local credentials/config, even if one ends up here by accident
+.env
+.env.*
+config.json
+*.local.json
