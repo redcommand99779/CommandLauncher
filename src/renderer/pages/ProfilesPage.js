@@ -1,21 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import useLaunch from '../hooks/useLaunch';
-import LaunchOverlay from '../components/LaunchOverlay';
+import useRunningProfiles from '../hooks/useRunningProfiles';
 
 const api = window.electronAPI || {};
 const ICONS = ['🎮', '⚔️', '🏰', '🌲', '⛏️', '🐉'];
 const VERSION_FALLBACK = ['1.21.4', '1.21.1', '1.20.4', '1.20.1', '1.19.4', '1.18.2', '1.16.5', '1.12.2'];
 const LOADERS = ['Vanilla', 'Fabric', 'Forge', 'Quilt', 'NeoForge'];
+const CONTENT_TABS = [
+  { id: 'mods', label: 'Mods', subFolder: 'mods', needsLoader: true },
+  { id: 'resourcepacks', label: 'Resourcepacks', subFolder: 'resourcepacks', needsLoader: false },
+  { id: 'shaders', label: 'Shaders', subFolder: 'shaderpacks', needsLoader: false },
+  { id: 'datapacks', label: 'Datapacks', subFolder: 'datapacks', needsLoader: false },
+  { id: 'welten', label: 'Worlds', subFolder: null, needsLoader: false },
+];
 
 export default function ProfilesPage() {
   const [profiles, setProfiles] = useState([]);
   const [selected, setSelected] = useState(null);
   const [worlds, setWorlds] = useState([]);
+  const [folderItems, setFolderItems] = useState([]);
+  const [contentTab, setContentTab] = useState('mods');
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [versions, setVersions] = useState(VERSION_FALLBACK);
-  const { launching, log, play, closeLog } = useLaunch();
+  const { launching, play, prepare } = useLaunch();
+  const runningProfileIds = useRunningProfiles();
 
   useEffect(() => {
     loadProfiles();
@@ -25,6 +35,10 @@ export default function ProfilesPage() {
   useEffect(() => {
     if (selected) loadWorlds(selected.id);
   }, [selected?.id]);
+
+  useEffect(() => {
+    if (selected && contentTab !== 'welten') loadFolderItems(selected.id, contentTab);
+  }, [selected?.id, contentTab]);
 
   async function loadProfiles() {
     const list = await api.listProfiles?.() || [];
@@ -47,6 +61,18 @@ export default function ProfilesPage() {
     setWorlds(w);
   }
 
+  async function loadFolderItems(id, tabId) {
+    const subFolder = CONTENT_TABS.find(t => t.id === tabId)?.subFolder || 'mods';
+    const items = await api.getProfileMods?.(id, subFolder) || [];
+    setFolderItems(items);
+  }
+
+  async function handleRemoveItem(filename) {
+    const subFolder = CONTENT_TABS.find(t => t.id === contentTab)?.subFolder || 'mods';
+    await api.modrinthRemoveMod?.({ filename, profileId: selected.id, subFolder });
+    await loadFolderItems(selected.id, contentTab);
+  }
+
   function openCreate() {
     if (launching) return;
     setEditing(null);
@@ -65,10 +91,13 @@ export default function ProfilesPage() {
     setEditing(null);
     await loadProfiles();
     setSelected(profile);
+    if ((profile.modLoader || 'Vanilla') !== 'Vanilla') {
+      await prepare(profile);
+    }
   }
 
   async function handleDelete(id) {
-    if (!window.confirm('Profil wirklich löschen? Alle Welten werden gelöscht!')) return;
+    if (!window.confirm('Really delete this profile? All worlds will be deleted!')) return;
     await api.deleteProfile?.(id);
     await loadProfiles();
   }
@@ -77,9 +106,9 @@ export default function ProfilesPage() {
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ width: 240, borderRight: '0.5px solid var(--border)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '16px 16px 10px', borderBottom: '0.5px solid var(--border)' }}>
-          <div className="section-label">Profile ({profiles.length})</div>
+          <div className="section-label">Profiles ({profiles.length})</div>
           <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={openCreate} disabled={launching}>
-            + Neues Profil
+            + New profile
           </button>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
@@ -101,12 +130,15 @@ export default function ProfilesPage() {
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{p.gameVersion} · {p.modLoader || 'Vanilla'}</div>
                 </div>
+                {runningProfileIds.has(p.id) && (
+                  <span title="Running" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', flexShrink: 0 }} />
+                )}
               </div>
             </div>
           ))}
           {profiles.length === 0 && (
             <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-4)', fontSize: 12 }}>
-              Noch keine Profile.<br />Erstelle dein erstes!
+              No profiles yet.<br />Create your first one!
             </div>
           )}
         </div>
@@ -115,7 +147,7 @@ export default function ProfilesPage() {
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {!selected ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-4)' }}>
-            Profil auswählen oder erstellen
+            Select or create a profile
           </div>
         ) : (
           <>
@@ -131,34 +163,70 @@ export default function ProfilesPage() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn-ghost" onClick={() => api.openProfileFolder?.(selected.id)}>📂 Ordner</button>
-                  <button className="btn-ghost" onClick={() => openEdit(selected)} disabled={launching}>✎ Bearbeiten</button>
-                  <button className="btn-primary" onClick={() => play(selected)} disabled={launching}>
-                    {launching ? 'Startet...' : '▶ Spielen'}
+                  <button className="btn-ghost" onClick={() => api.openProfileFolder?.(selected.id)}>📂 Folder</button>
+                  <button className="btn-ghost" onClick={() => openEdit(selected)} disabled={launching}>✎ Edit</button>
+                  <button
+                    className="btn-primary"
+                    onClick={() => play(selected)}
+                    disabled={launching || runningProfileIds.has(selected.id)}
+                  >
+                    {runningProfileIds.has(selected.id) ? '● Already running' : launching ? 'Starting...' : '▶ Play'}
                   </button>
                 </div>
               </div>
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-              <div className="section-label">Welten ({worlds.length})</div>
-              {worlds.length === 0 ? (
-                <div className="card" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-4)' }}>
-                  <div style={{ fontSize: 28, marginBottom: 8 }}>🌍</div>
-                  <div style={{ fontSize: 13, color: 'var(--text-3)' }}>Noch keine Welten</div>
-                  <div style={{ fontSize: 11, marginTop: 4 }}>Starte das Spiel mit diesem Profil, um eine Welt zu erstellen.</div>
+              <div style={{ display: 'flex', gap: 4, marginBottom: 14, flexWrap: 'wrap' }}>
+                {CONTENT_TABS.map(t => (
+                  <button key={t.id} onClick={() => setContentTab(t.id)} style={{
+                    padding: '5px 12px', borderRadius: 6, fontSize: 12,
+                    border: `0.5px solid ${contentTab === t.id ? 'var(--accent)' : 'var(--border)'}`,
+                    background: contentTab === t.id ? '#1e3a5f' : 'var(--bg-2)',
+                    color: contentTab === t.id ? 'var(--accent-light)' : 'var(--text-4)',
+                    cursor: 'pointer',
+                  }}>{t.label}</button>
+                ))}
+              </div>
+
+              {contentTab === 'welten' ? (
+                worlds.length === 0 ? (
+                  <div className="card" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-4)' }}>
+                    <div style={{ fontSize: 28, marginBottom: 8 }}>🌍</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-3)' }}>No worlds yet</div>
+                    <div style={{ fontSize: 11, marginTop: 4 }}>Launch the game with this profile to create a world.</div>
+                  </div>
+                ) : (
+                  worlds.map(w => (
+                    <div key={w.name} className="card" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ fontSize: 24 }}>🌍</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-1)' }}>{w.name}</div>
+                    </div>
+                  ))
+                )
+              ) : CONTENT_TABS.find(t => t.id === contentTab)?.needsLoader && (selected.modLoader || 'Vanilla') === 'Vanilla' ? (
+                <div className="card" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-4)' }}>
+                  <div style={{ fontSize: 12 }}>Vanilla profiles don't support mods. Set a mod loader in "Edit".</div>
+                </div>
+              ) : folderItems.length === 0 ? (
+                <div className="card" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-4)' }}>
+                  <div style={{ fontSize: 12 }}>Nothing installed. Use the Mod Browser to add some.</div>
                 </div>
               ) : (
-                worlds.map(w => (
-                  <div key={w.name} className="card" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ fontSize: 24 }}>🌍</div>
-                    <div style={{ fontSize: 13, color: 'var(--text-1)' }}>{w.name}</div>
+                folderItems.map(m => (
+                  <div key={m.filename} className="card" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ fontSize: 18 }}>📦</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.filename}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{(m.size / 1024).toFixed(0)} KB</div>
+                    </div>
+                    <button className="btn-danger" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => handleRemoveItem(m.filename)}>✕</button>
                   </div>
                 ))
               )}
 
               <div style={{ marginTop: 20 }}>
-                <button className="btn-danger" onClick={() => handleDelete(selected.id)}>🗑 Profil löschen</button>
+                <button className="btn-danger" onClick={() => handleDelete(selected.id)}>🗑 Delete profile</button>
               </div>
             </div>
           </>
@@ -173,8 +241,6 @@ export default function ProfilesPage() {
           onClose={() => { setShowModal(false); setEditing(null); }}
         />
       )}
-
-      {launching && <LaunchOverlay log={log} onClose={closeLog} />}
     </div>
   );
 }
@@ -195,7 +261,7 @@ function ProfileModal({ profile, versions, onSave, onClose }) {
   return (
     <div className="modal-overlay">
       <div className="modal" style={{ width: 440 }}>
-        <div className="modal-title">{profile ? 'Profil bearbeiten' : 'Neues Profil'}</div>
+        <div className="modal-title">{profile ? 'Edit profile' : 'New profile'}</div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="form-group">
@@ -218,8 +284,8 @@ function ProfileModal({ profile, versions, onSave, onClose }) {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Profilname *</label>
-            <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="z.B. Survival Welt" autoFocus />
+            <label className="form-label">Profile name *</label>
+            <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Survival World" autoFocus />
           </div>
 
           <div className="form-group">
@@ -230,7 +296,7 @@ function ProfileModal({ profile, versions, onSave, onClose }) {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Mod-Loader</label>
+            <label className="form-label">Mod Loader</label>
             <select className="form-select" value={form.modLoader} onChange={e => set('modLoader', e.target.value)}>
               {LOADERS.map(l => <option key={l} value={l}>{l}</option>)}
             </select>
@@ -246,9 +312,9 @@ function ProfileModal({ profile, versions, onSave, onClose }) {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 22 }}>
-          <button className="btn-ghost" onClick={onClose}>Abbrechen</button>
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn-primary" onClick={() => form.name && onSave(form)} disabled={!form.name}>
-            {profile ? 'Speichern' : 'Profil erstellen'}
+            {profile ? 'Save' : 'Create profile'}
           </button>
         </div>
       </div>

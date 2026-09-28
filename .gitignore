@@ -1,6 +1,7 @@
 node_modules/
 build/
 dist/
+release/
 
 # safety net: never commit local credentials/config, even if one ends up here by accident
 .env

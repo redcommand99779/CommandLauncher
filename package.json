@@ -1,6 +1,6 @@
 {
   "name": "command-launcher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Command Launcher - Minecraft Launcher",
   "main": "src/main/main.js",
@@ -9,10 +9,13 @@
     "build": "webpack --mode production",
     "electron": "electron .",
     "dev": "concurrently -k \"npm:start\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "release": "npm run build && electron-builder --publish always"
   },
   "dependencies": {
+    "adm-zip": "^0.5.18",
     "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.9",
     "fs-extra": "^11.2.0",
     "minecraft-launcher-core": "^3.18.1",
     "react": "^18.3.1",
@@ -35,5 +38,29 @@
     "webpack": "^5.91.0",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^5.0.4"
+  },
+  "build": {
+    "appId": "com.commandlauncher.app",
+    "productName": "Command Launcher",
+    "files": [
+      "build/**/*",
+      "src/main/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "redcommand99779",
+      "repo": "CommandLauncher"
+    }
   }
 }

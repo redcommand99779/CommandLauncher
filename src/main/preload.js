@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProfileWorlds: (id) => ipcRenderer.invoke('profiles:getWorlds', id),
   openProfileFolder: (id) => ipcRenderer.invoke('profiles:openFolder', id),
   getProfileMods: (id, subFolder) => ipcRenderer.invoke('profiles:getMods', id, subFolder),
+  prepareLoader: (profile) => ipcRenderer.invoke('profiles:prepareLoader', { profile }),
+  isProfileRunning: (id) => ipcRenderer.invoke('profiles:isRunning', id),
+  listRunningProfiles: () => ipcRenderer.invoke('profiles:listRunning'),
+  onProcessStatus: (cb) => ipcRenderer.on('process:status', (_, data) => cb(data)),
 
   // Versions
   listVersions: () => ipcRenderer.invoke('versions:list'),
@@ -27,9 +31,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   modrinthGetVersions: (params) => ipcRenderer.invoke('modrinth:getVersions', params),
   modrinthDownloadMod: (params) => ipcRenderer.invoke('modrinth:downloadMod', params),
   modrinthRemoveMod: (params) => ipcRenderer.invoke('modrinth:removeMod', params),
+  installModpack: (params) => ipcRenderer.invoke('modrinth:installModpack', params),
 
   // Launch
   launchMinecraft: (params) => ipcRenderer.invoke('minecraft:launch', params),
-  onLaunchLog: (cb) => ipcRenderer.on('launch:log', (_, data) => cb(data)),
-  offLaunchLog: () => ipcRenderer.removeAllListeners('launch:log'),
+
+  // Auto-Update
+  onUpdateStatus: (cb) => ipcRenderer.on('update:status', (_, data) => cb(data)),
+  installUpdate: () => ipcRenderer.invoke('update:installNow'),
 });

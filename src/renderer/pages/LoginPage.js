@@ -13,7 +13,7 @@ export default function LoginPage({ onLogin }) {
       const account = await api.microsoftLogin?.();
       if (account) onLogin(account);
     } catch (e) {
-      setError(e.message || 'Login fehlgeschlagen');
+      setError(e.message || 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -24,10 +24,10 @@ export default function LoginPage({ onLogin }) {
       <div style={{ fontSize: 48 }}>⛏️</div>
       <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-1)' }}>Command Launcher</div>
       <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 8 }}>
-        Melde dich mit deinem Minecraft-Account an
+        Sign in with your Minecraft account
       </div>
       <button className="btn-primary" style={{ padding: '10px 22px', fontSize: 14 }} onClick={handleLogin} disabled={loading}>
-        {loading ? 'Anmelden...' : 'Mit Microsoft anmelden'}
+        {loading ? 'Signing in...' : 'Sign in with Microsoft'}
       </button>
       {error && <div style={{ color: 'var(--danger)', fontSize: 12, maxWidth: 360, textAlign: 'center' }}>{error}</div>}
     </div>

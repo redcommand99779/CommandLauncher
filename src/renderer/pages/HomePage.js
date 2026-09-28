@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import useLaunch from '../hooks/useLaunch';
-import LaunchOverlay from '../components/LaunchOverlay';
+import useRunningProfiles from '../hooks/useRunningProfiles';
 
 const api = window.electronAPI || {};
 
 export default function HomePage({ account, setPage }) {
   const [profiles, setProfiles] = useState([]);
-  const { launching, log, play, closeLog } = useLaunch();
+  const { launching, play } = useLaunch();
+  const runningProfileIds = useRunningProfiles();
 
   useEffect(() => {
     api.listProfiles?.().then(list => setProfiles(list || []));
@@ -15,17 +16,17 @@ export default function HomePage({ account, setPage }) {
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '32px 40px', width: '100%' }}>
       <div style={{ fontSize: 22, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>
-        Willkommen, {account?.username}
+        Welcome, {account?.username}
       </div>
       <div style={{ fontSize: 13, color: 'var(--text-3)', marginBottom: 28 }}>
-        {profiles.length === 0 ? 'Erstelle dein erstes Profil, um loszulegen.' : 'Wähle ein Profil zum Spielen.'}
+        {profiles.length === 0 ? 'Create your first profile to get started.' : 'Choose a profile to play.'}
       </div>
 
       {profiles.length === 0 ? (
         <div className="card" style={{ padding: 32, textAlign: 'center' }}>
           <div style={{ fontSize: 32, marginBottom: 10 }}>🎮</div>
-          <div style={{ fontSize: 14, color: 'var(--text-2)', marginBottom: 16 }}>Noch keine Profile vorhanden</div>
-          <button className="btn-primary" onClick={() => setPage('profiles')}>+ Profil erstellen</button>
+          <div style={{ fontSize: 14, color: 'var(--text-2)', marginBottom: 16 }}>No profiles yet</div>
+          <button className="btn-primary" onClick={() => setPage('profiles')}>+ Create profile</button>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
@@ -38,15 +39,18 @@ export default function HomePage({ account, setPage }) {
                   <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{p.gameVersion} · {p.modLoader || 'Vanilla'}</div>
                 </div>
               </div>
-              <button className="btn-primary" style={{ justifyContent: 'center' }} onClick={() => play(p)} disabled={launching}>
-                ▶ Spielen
+              <button
+                className="btn-primary"
+                style={{ justifyContent: 'center' }}
+                onClick={() => play(p)}
+                disabled={launching || runningProfileIds.has(p.id)}
+              >
+                {runningProfileIds.has(p.id) ? '● Already running' : '▶ Play'}
               </button>
             </div>
           ))}
         </div>
       )}
-
-      {launching && <LaunchOverlay log={log} onClose={closeLog} />}
     </div>
   );
 }

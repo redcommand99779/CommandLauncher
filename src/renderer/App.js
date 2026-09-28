@@ -27,7 +27,7 @@ export default function App() {
   if (authLoading) {
     return (
       <div style={{ height: '100vh', background: 'var(--bg-0)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-4)', fontSize: 13 }}>
-        Laden...
+        Loading...
       </div>
     );
   }
@@ -40,7 +40,7 @@ export default function App() {
       ) : (
         <>
           <nav style={{ display: 'flex', gap: 2, padding: '8px 20px 0', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}>
-            {[['home', 'Start'], ['profiles', 'Profile'], ['mods', 'Mod-Browser']].map(([id, label]) => (
+            {[['home', 'Home'], ['profiles', 'Profiles'], ['mods', 'Mod Browser']].map(([id, label]) => (
               <button key={id} onClick={() => setPage(id)} style={{
                 padding: '8px 16px', background: 'transparent', border: 'none',
                 borderBottom: `2px solid ${page === id ? 'var(--accent)' : 'transparent'}`,

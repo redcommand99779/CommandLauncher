@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import useLaunch from '../hooks/useLaunch';
 
 const api = window.electronAPI || {};
 
 const CONTENT_TYPES = [
   { id: 'mod', label: '⊞ Mods', subFolder: 'mods' },
   { id: 'resourcepack', label: '🎨 Resourcepacks', subFolder: 'resourcepacks' },
-  { id: 'shader', label: '✨ Shader', subFolder: 'shaderpacks' },
+  { id: 'shader', label: '✨ Shaders', subFolder: 'shaderpacks' },
   { id: 'datapack', label: '📦 Datapacks', subFolder: 'datapacks' },
+  { id: 'modpack', label: '🗂 Modpacks', subFolder: null },
 ];
 
 const LOADER_SLUGS = { Fabric: ['fabric'], Forge: ['forge'], Quilt: ['quilt'], NeoForge: ['neoforge'] };
@@ -23,20 +25,27 @@ export default function ModBrowserPage() {
   const [statusMsg, setStatusMsg] = useState('');
   const [offset, setOffset] = useState(0);
   const [totalHits, setTotalHits] = useState(0);
+  const { installModpack } = useLaunch();
 
+  const isModpackTab = contentType === 'modpack';
   const activeProfile = profiles.find(p => p.id === profileId) || null;
   const subFolder = CONTENT_TYPES.find(t => t.id === contentType)?.subFolder || 'mods';
   const needsLoader = contentType === 'mod' && (!activeProfile || (activeProfile.modLoader || 'Vanilla') === 'Vanilla');
+  const noProfilesYet = !isModpackTab && profiles.length === 0;
 
+  useEffect(() => { loadProfiles(); }, []);
+
+  async function loadProfiles() {
+    const list = await api.listProfiles?.() || [];
+    setProfiles(list);
+    if (list.length && !profileId) setProfileId(list[0].id);
+  }
+
+  useEffect(() => { if (activeProfile && !isModpackTab) loadInstalled(); }, [activeProfile?.id, contentType]);
   useEffect(() => {
-    api.listProfiles?.().then(list => {
-      setProfiles(list || []);
-      if (list?.length && !profileId) setProfileId(list[0].id);
-    });
-  }, []);
-
-  useEffect(() => { if (activeProfile) loadInstalled(); }, [activeProfile?.id, contentType]);
-  useEffect(() => { if (!needsLoader) doSearch(0); else { setResults([]); setTotalHits(0); } }, [contentType, activeProfile?.id]);
+    if (isModpackTab || (!needsLoader && !noProfilesYet)) doSearch(0);
+    else { setResults([]); setTotalHits(0); }
+  }, [contentType, activeProfile?.id]);
 
   async function loadInstalled() {
     const items = await api.getProfileMods?.(activeProfile.id, subFolder) || [];
@@ -44,13 +53,13 @@ export default function ModBrowserPage() {
   }
 
   const doSearch = useCallback(async (newOffset = 0) => {
-    if (!activeProfile || needsLoader) return;
+    if (!isModpackTab && (!activeProfile || needsLoader)) return;
     setLoading(true);
     try {
       const loaders = contentType === 'mod' ? (LOADER_SLUGS[activeProfile.modLoader] || []) : [];
       const res = await api.modrinthSearch?.({
         query,
-        gameVersion: activeProfile.gameVersion,
+        gameVersion: isModpackTab ? '' : activeProfile.gameVersion,
         loaders,
         limit: 20,
         offset: newOffset,
@@ -59,44 +68,65 @@ export default function ModBrowserPage() {
       if (res?.hits) { setResults(res.hits); setTotalHits(res.total_hits || 0); setOffset(newOffset); }
       else { setResults([]); setTotalHits(0); }
     } finally { setLoading(false); }
-  }, [query, contentType, activeProfile?.id, needsLoader]);
+  }, [query, contentType, activeProfile?.id, needsLoader, isModpackTab]);
+
+  async function installMod(item) {
+    const loaders = contentType === 'mod' ? (LOADER_SLUGS[activeProfile.modLoader] || []) : [];
+    const versions = await api.modrinthGetVersions?.({
+      projectId: item.project_id || item.slug,
+      gameVersion: activeProfile.gameVersion,
+      loaders,
+    });
+    if (!versions?.length) { setStatusMsg('❌ No compatible version found.'); return; }
+
+    const ver = versions[0];
+    const file = ver.files?.find(f => f.primary) || ver.files?.[0];
+    if (!file) { setStatusMsg('❌ No download file found.'); return; }
+
+    setStatusMsg(`⬇ Downloading ${item.title}...`);
+    const result = await api.modrinthDownloadMod?.({
+      url: file.url, filename: file.filename, profileId: activeProfile.id, subFolder,
+    });
+    if (result?.success) {
+      setInstalledItems(p => [...p, file.filename]);
+      setStatusMsg(`✓ ${item.title} installed!`);
+    } else {
+      setStatusMsg(`❌ Error: ${result?.error || 'Unknown'}`);
+    }
+  }
+
+  async function installPack(item) {
+    const versions = await api.modrinthGetVersions?.({ projectId: item.project_id || item.slug, gameVersion: '', loaders: [] });
+    if (!versions?.length) { setStatusMsg('❌ No version found.'); return; }
+    const ver = versions[0];
+    const file = ver.files?.find(f => f.filename?.endsWith('.mrpack')) || ver.files?.[0];
+    if (!file) { setStatusMsg('❌ No .mrpack file found.'); return; }
+
+    const result = await installModpack({ url: file.url, filename: file.filename, packName: item.title });
+    if (result?.success) {
+      setStatusMsg(`✓ "${item.title}" installed as a new profile!`);
+      await loadProfiles();
+    } else {
+      setStatusMsg(`❌ Error: ${result?.error || 'Unknown'}`);
+    }
+  }
 
   async function installItem(item) {
-    if (!activeProfile) return;
     const id = item.project_id || item.slug;
     setInstalling(p => ({ ...p, [id]: true }));
     setStatusMsg('');
     try {
-      const loaders = contentType === 'mod' ? (LOADER_SLUGS[activeProfile.modLoader] || []) : [];
-      const versions = await api.modrinthGetVersions?.({
-        projectId: item.project_id || item.slug,
-        gameVersion: activeProfile.gameVersion,
-        loaders,
-      });
-      if (!versions?.length) { setStatusMsg('❌ Keine kompatible Version gefunden.'); return; }
-
-      const ver = versions[0];
-      const file = ver.files?.find(f => f.primary) || ver.files?.[0];
-      if (!file) { setStatusMsg('❌ Keine Download-Datei gefunden.'); return; }
-
-      setStatusMsg(`⬇ Lade ${item.title} herunter...`);
-      const result = await api.modrinthDownloadMod?.({
-        url: file.url, filename: file.filename, profileId: activeProfile.id, subFolder,
-      });
-      if (result?.success) {
-        setInstalledItems(p => [...p, file.filename]);
-        setStatusMsg(`✓ ${item.title} installiert!`);
-      } else {
-        setStatusMsg(`❌ Fehler: ${result?.error || 'Unbekannt'}`);
-      }
+      if (isModpackTab) await installPack(item);
+      else await installMod(item);
     } catch (e) {
-      setStatusMsg(`❌ Fehler: ${e.message}`);
+      setStatusMsg(`❌ Error: ${e.message}`);
     } finally {
       setInstalling(p => ({ ...p, [id]: false }));
     }
   }
 
   const isInstalled = (item) => {
+    if (isModpackTab) return false;
     const slug = (item.slug || '').toLowerCase();
     const title = (item.title || '').toLowerCase().replace(/\s+/g, '-');
     return installedItems.some(f => {
@@ -106,15 +136,6 @@ export default function ModBrowserPage() {
   };
 
   const handleSearch = (e) => { e.preventDefault(); doSearch(0); };
-
-  if (profiles.length === 0) {
-    return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12, color: 'var(--text-4)' }}>
-        <div style={{ fontSize: 36 }}>⊞</div>
-        <div style={{ fontSize: 14, color: 'var(--text-3)' }}>Erstelle zuerst ein Profil</div>
-      </div>
-    );
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', width: '100%' }}>
@@ -134,14 +155,26 @@ export default function ModBrowserPage() {
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
           <div style={{ fontSize: 11, color: 'var(--text-4)' }}>🟢 Modrinth</div>
-          <select className="form-select" value={profileId} onChange={e => setProfileId(e.target.value)} style={{ fontSize: 12 }}>
-            {profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.gameVersion} · {p.modLoader || 'Vanilla'}</option>)}
-          </select>
+          {!isModpackTab && profiles.length > 0 && (
+            <select className="form-select" value={profileId} onChange={e => setProfileId(e.target.value)} style={{ fontSize: 12 }}>
+              {profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.gameVersion} · {p.modLoader || 'Vanilla'}</option>)}
+            </select>
+          )}
         </div>
 
-        {needsLoader ? (
+        {isModpackTab && (
+          <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 10 }}>
+            Installing automatically creates a new profile with the matching version, mod loader, and all included mods.
+          </div>
+        )}
+
+        {noProfilesYet ? (
           <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>
-            Dieses Profil nutzt Vanilla (keinen Mod-Loader). Stell in "Profile bearbeiten" Fabric, Forge, Quilt oder NeoForge ein, um Mods zu installieren.
+            Create a profile on the Profiles page first.
+          </div>
+        ) : needsLoader ? (
+          <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>
+            This profile uses Vanilla (no mod loader). Set Fabric, Forge, Quilt, or NeoForge in "Edit profile" to install mods.
           </div>
         ) : (
           <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8 }}>
@@ -149,11 +182,11 @@ export default function ModBrowserPage() {
               value={query}
               onChange={e => setQuery(e.target.value)}
               className="form-input"
-              placeholder={`${CONTENT_TYPES.find(t => t.id === contentType)?.label || 'Mods'} suchen...`}
+              placeholder={`Search ${CONTENT_TYPES.find(t => t.id === contentType)?.label || 'Mods'}...`}
               style={{ flex: 1, fontSize: 13 }}
             />
             <button type="submit" className="btn-primary" style={{ fontSize: 12, padding: '8px 16px' }}>
-              🔍 Suchen
+              🔍 Search
             </button>
           </form>
         )}
@@ -166,20 +199,21 @@ export default function ModBrowserPage() {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '10px 16px' }}>
-        {needsLoader ? null : loading ? (
-          <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-4)' }}>Suche läuft...</div>
+        {noProfilesYet || needsLoader ? null : loading ? (
+          <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-4)' }}>Searching...</div>
         ) : results.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-4)' }}>
             <div style={{ fontSize: 28, marginBottom: 8 }}>🔍</div>
-            <div style={{ fontSize: 13, color: 'var(--text-3)' }}>Keine Ergebnisse</div>
+            <div style={{ fontSize: 13, color: 'var(--text-3)' }}>No results</div>
           </div>
         ) : (
           <>
-            <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 10 }}>{totalHits.toLocaleString()} Ergebnisse</div>
+            <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 10 }}>{totalHits.toLocaleString()} results</div>
             {results.map(item => (
               <ResultCard
                 key={item.project_id || item.slug}
                 item={item}
+                isModpack={isModpackTab}
                 installed={isInstalled(item)}
                 installing={!!installing[item.project_id || item.slug]}
                 onInstall={() => installItem(item)}
@@ -187,17 +221,18 @@ export default function ModBrowserPage() {
             ))}
             {totalHits > offset + 20 && (
               <div style={{ textAlign: 'center', padding: 16 }}>
-                <button className="btn-ghost" onClick={() => doSearch(offset + 20)}>Mehr laden</button>
+                <button className="btn-ghost" onClick={() => doSearch(offset + 20)}>Load more</button>
               </div>
             )}
           </>
         )}
       </div>
+
     </div>
   );
 }
 
-function ResultCard({ item, installed, installing, onInstall }) {
+function ResultCard({ item, isModpack, installed, installing, onInstall }) {
   return (
     <div style={{
       background: 'var(--bg-2)', border: '0.5px solid var(--border)',
@@ -208,7 +243,7 @@ function ResultCard({ item, installed, installing, onInstall }) {
         width: 44, height: 44, borderRadius: 8, overflow: 'hidden',
         background: '#1a1d2a', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        {item.icon_url ? <img src={item.icon_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 22 }}>📦</span>}
+        {item.icon_url ? <img src={item.icon_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 22 }}>{isModpack ? '🗂' : '📦'}</span>}
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -222,10 +257,10 @@ function ResultCard({ item, installed, installing, onInstall }) {
 
       <div style={{ flexShrink: 0 }}>
         {installed ? (
-          <div style={{ fontSize: 12, color: '#3dcc6e' }}>✓ Installiert</div>
+          <div style={{ fontSize: 12, color: '#3dcc6e' }}>✓ Installed</div>
         ) : (
           <button className="btn-primary" onClick={onInstall} disabled={installing} style={{ fontSize: 12, padding: '6px 14px', whiteSpace: 'nowrap' }}>
-            {installing ? '⏳' : '⬇ Installieren'}
+            {installing ? '⏳' : isModpack ? '+ As profile' : '⬇ Install'}
           </button>
         )}
       </div>

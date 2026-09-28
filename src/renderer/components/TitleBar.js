@@ -1,8 +1,14 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 const api = window.electronAPI || {};
 
 export default function TitleBar({ account, onLogout }) {
+  const [update, setUpdate] = useState(null); // { status: 'available'|'downloading'|'ready', version, percent }
+
+  useEffect(() => {
+    api.onUpdateStatus?.(data => setUpdate(data));
+  }, []);
+
   return (
     <div
       style={{
@@ -22,6 +28,20 @@ export default function TitleBar({ account, onLogout }) {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+        {update?.status === 'downloading' && (
+          <div style={{ WebkitAppRegion: 'no-drag', fontSize: 11, color: 'var(--text-4)', marginRight: 12 }}>
+            ⬇ Downloading update... {update.percent}%
+          </div>
+        )}
+        {update?.status === 'ready' && (
+          <button
+            className="btn-primary"
+            style={{ WebkitAppRegion: 'no-drag', padding: '4px 10px', fontSize: 11, marginRight: 12 }}
+            onClick={() => api.installUpdate?.()}
+          >
+            🔄 Update {update.version} — Restart
+          </button>
+        )}
         {account && (
           <div
             style={{

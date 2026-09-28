@@ -37,7 +37,7 @@ async function openMicrosoftLogin() {
 
     const win = new BrowserWindow({
       width: 520, height: 680,
-      title: 'Microsoft Login â€” Command Launcher',
+      title: 'Microsoft Login — Command Launcher',
       webPreferences: { nodeIntegration: false, contextIsolation: true },
       autoHideMenuBar: true,
     });
@@ -114,7 +114,7 @@ async function getMinecraftProfile(mcToken) {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
-        try { resolve(JSON.parse(d)); } catch { reject(new Error('Profil Fehler')); }
+        try { resolve(JSON.parse(d)); } catch { reject(new Error('Profile error')); }
       });
     }).on('error', reject);
   });
@@ -131,24 +131,24 @@ async function refreshMicrosoftToken(refreshToken) {
 async function microsoftLogin() {
   const code = await openMicrosoftLogin();
   const msToken = await getMicrosoftToken(code);
-  if (!msToken.access_token) throw new Error('Microsoft Token Fehler');
+  if (!msToken.access_token) throw new Error('Microsoft token error');
 
   const xbl = await getXboxToken(msToken.access_token);
-  if (!xbl.Token) throw new Error('Xbox Live Fehler');
+  if (!xbl.Token) throw new Error('Xbox Live error');
 
   const uhs = xbl.DisplayClaims?.xui?.[0]?.uhs;
   const xsts = await getXSTSToken(xbl.Token);
   if (!xsts.Token) {
-    if (xsts.XErr === 2148916233) throw new Error('Kein Microsoft Konto â€” bitte erstelle ein Microsoft Konto');
-    if (xsts.XErr === 2148916238) throw new Error('Kinderkonto â€” bitte fÃ¼ge es einer Familie hinzu');
-    throw new Error('XSTS Fehler: ' + xsts.XErr);
+    if (xsts.XErr === 2148916233) throw new Error('No Microsoft account — please create a Microsoft account');
+    if (xsts.XErr === 2148916238) throw new Error('Child account — please add it to a family');
+    throw new Error('XSTS error: ' + xsts.XErr);
   }
 
   const mc = await getMinecraftToken(uhs, xsts.Token);
-  if (!mc.access_token) throw new Error('Minecraft Token Fehler');
+  if (!mc.access_token) throw new Error('Minecraft token error');
 
   const profile = await getMinecraftProfile(mc.access_token);
-  if (!profile.id) throw new Error('Kein Minecraft Account gefunden â€” kaufe Minecraft zuerst!');
+  if (!profile.id) throw new Error('No Minecraft account found — buy Minecraft first!');
 
   const account = {
     username: profile.name,
