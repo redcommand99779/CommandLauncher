@@ -161,7 +161,7 @@ export default function SettingsPage() {
           </div>
           <div
             style={{ fontSize: 12, color: 'var(--accent-light)', cursor: 'pointer' }}
-            onClick={() => api.openExternal?.('https://discord.gg/AQ8V94qhjg')}
+            onClick={() => api.openExternal?.('https://discord.gg/yM2PSGxW2K')}
           >
             💬 Join the Discord — report bugs, suggest features
           </div>
