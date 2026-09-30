@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  exportAllProfiles: () => ipcRenderer.invoke('app:exportAllProfiles'),
+  importProfiles: () => ipcRenderer.invoke('app:importProfiles'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   pickJavaPath: () => ipcRenderer.invoke('settings:pickJavaPath'),
 

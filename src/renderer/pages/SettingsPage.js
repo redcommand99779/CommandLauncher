@@ -6,9 +6,12 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
+  const [backupMsg, setBackupMsg] = useState('');
 
   useEffect(() => {
     api.getSettings?.().then(setSettings);
+    api.getAppVersion?.().then(setAppVersion);
   }, []);
 
   function set(k, v) {
@@ -32,6 +35,18 @@ export default function SettingsPage() {
   async function handlePickJava() {
     const picked = await api.pickJavaPath?.();
     if (picked) set('javaPathOverride', picked);
+  }
+
+  async function handleExportProfiles() {
+    const result = await api.exportAllProfiles?.();
+    if (result?.success) setBackupMsg(`✓ Exported to ${result.path}`);
+    else if (result?.error && result.error !== 'Cancelled') setBackupMsg(`❌ ${result.error}`);
+  }
+
+  async function handleImportProfiles() {
+    const result = await api.importProfiles?.();
+    if (result?.success) setBackupMsg('✓ Profiles imported. Switch tabs to see them.');
+    else if (result?.error && result.error !== 'Cancelled') setBackupMsg(`❌ ${result.error}`);
   }
 
   if (!settings) {
@@ -110,11 +125,39 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
         <button className="btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save settings'}
         </button>
         {saved && <span style={{ fontSize: 12, color: '#3dcc6e' }}>✓ Saved</span>}
+      </div>
+
+      <div className="section-label">Backup</div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 12 }}>
+          Export every profile (mods, worlds, settings) to a single .zip, or restore one on another PC.
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn-ghost" onClick={handleExportProfiles}>⬇ Export all profiles</button>
+          <button className="btn-ghost" onClick={handleImportProfiles}>⬆ Import profiles</button>
+        </div>
+        {backupMsg && (
+          <div style={{ marginTop: 8, fontSize: 12, color: backupMsg.startsWith('✓') ? '#3dcc6e' : 'var(--danger)' }}>{backupMsg}</div>
+        )}
+      </div>
+
+      <div className="section-label">About</div>
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ fontSize: 13, color: 'var(--text-1)', fontWeight: 600 }}>Command Launcher {appVersion && `v${appVersion}`}</div>
+        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+          A lightweight Minecraft launcher. Mod search powered by Modrinth and CurseForge.
+        </div>
+        <div
+          style={{ fontSize: 12, color: 'var(--accent-light)', cursor: 'pointer', marginTop: 4 }}
+          onClick={() => api.openExternal?.('https://github.com/redcommand99779/CommandLauncher')}
+        >
+          github.com/redcommand99779/CommandLauncher
+        </div>
       </div>
     </div>
   );

@@ -432,6 +432,39 @@ ipcMain.handle('profiles:listRunning', () => [...runningProcesses.keys()]);
 // ── Settings ─────────────────────────────────────────────────────────────
 ipcMain.handle('settings:get', () => loadSettings());
 ipcMain.handle('app:getVersion', () => app.getVersion());
+ipcMain.handle('app:openExternal', (_, url) => shell.openExternal(url));
+
+ipcMain.handle('app:exportAllProfiles', async () => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export all profiles',
+    defaultPath: `command-launcher-profiles-${new Date().toISOString().slice(0, 10)}.zip`,
+    filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+  });
+  if (result.canceled || !result.filePath) return { success: false, error: 'Cancelled' };
+  try {
+    const zip = new AdmZip();
+    zip.addLocalFolder(PROFILES_DIR);
+    zip.writeZip(result.filePath);
+    return { success: true, path: result.filePath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('app:importProfiles', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import profiles',
+    properties: ['openFile'],
+    filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return { success: false, error: 'Cancelled' };
+  try {
+    new AdmZip(result.filePaths[0]).extractAllTo(PROFILES_DIR, true);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
 ipcMain.handle('settings:save', (_, settings) => {
   const merged = saveSettings(settings);
   if (merged.discordRpcEnabled && !discordRpc) setupDiscordRPC();

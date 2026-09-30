@@ -31,6 +31,20 @@ export default function App() {
 
   useEffect(() => {
     if (!account) return;
+    const TAB_KEYS = { '1': 'home', '2': 'profiles', '3': 'mods', '4': 'settings' };
+    function handleKeyDown(e) {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      const tab = TAB_KEYS[e.key];
+      if (!tab) return;
+      e.preventDefault();
+      setPage(tab);
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [account?.uuid]);
+
+  useEffect(() => {
+    if (!account) return;
     (async () => {
       const [settings, currentVersion] = await Promise.all([api.getSettings?.(), api.getAppVersion?.()]);
       if (!settings) return;
@@ -83,8 +97,8 @@ export default function App() {
       ) : (
         <>
           <nav style={{ display: 'flex', gap: 2, padding: '8px 20px 0', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}>
-            {[['home', 'Home'], ['profiles', 'Profiles'], ['mods', 'Mod Browser'], ['settings', 'Settings']].map(([id, label]) => (
-              <button key={id} onClick={() => setPage(id)} style={{
+            {[['home', 'Home', '1'], ['profiles', 'Profiles', '2'], ['mods', 'Mod Browser', '3'], ['settings', 'Settings', '4']].map(([id, label, key]) => (
+              <button key={id} onClick={() => setPage(id)} title={`Ctrl+${key}`} style={{
                 padding: '8px 16px', background: 'transparent', border: 'none',
                 borderBottom: `2px solid ${page === id ? 'var(--accent)' : 'transparent'}`,
                 color: page === id ? 'var(--accent-light)' : 'var(--text-3)', fontSize: 13, cursor: 'pointer',
