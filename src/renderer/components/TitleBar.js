@@ -57,7 +57,7 @@ export default function TitleBar({ account, onLogout, onAccountChange }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        background: '#0b0d13',
+        background: 'var(--bg-1)',
         borderBottom: '0.5px solid var(--border)',
         WebkitAppRegion: 'drag',
         padding: '0 0 0 14px',
@@ -109,7 +109,7 @@ export default function TitleBar({ account, onLogout, onAccountChange }) {
                     style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
                       padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 12,
-                      background: a.uuid === account.uuid ? '#1e3a5f' : 'transparent',
+                      background: a.uuid === account.uuid ? 'var(--hover-overlay)' : 'transparent',
                       color: a.uuid === account.uuid ? 'var(--accent-light)' : 'var(--text-2)',
                     }}
                   >
@@ -155,7 +155,7 @@ function TitleBarButton({ onClick, label, danger }) {
         cursor: 'pointer',
         fontSize: 12,
       }}
-      onMouseEnter={e => { e.currentTarget.style.background = danger ? '#c84040' : '#1a1d2a'; e.currentTarget.style.color = '#fff'; }}
+      onMouseEnter={e => { e.currentTarget.style.background = danger ? 'var(--danger)' : 'var(--hover-overlay)'; e.currentTarget.style.color = danger ? '#fff' : 'var(--text-1)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-3)'; }}
     >
       {label}

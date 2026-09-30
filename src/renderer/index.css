@@ -15,6 +15,25 @@
   --green: #28c840;
   --radius: 8px;
   --mono: 'Consolas', 'Courier New', monospace;
+  --hover-overlay: #1a1d2a;
+}
+
+[data-theme="light"] {
+  --bg-0: #f4f5f8;
+  --bg-1: #ffffff;
+  --bg-2: #eceef3;
+  --border: #dde1ea;
+  --text-1: #14161c;
+  --text-2: #3a4050;
+  --text-3: #62697a;
+  --text-4: #9399aa;
+  --accent: #1a5fbf;
+  --accent-hover: #2a70d6;
+  --accent-light: #1a5fbf;
+  --danger: #c23030;
+  --danger-hover: #d13c3c;
+  --green: #1f9c37;
+  --hover-overlay: #e4e7ee;
 }
 
 * {
@@ -84,7 +103,7 @@ input, textarea, select, button {
   border-color: var(--border);
   color: var(--text-2);
 }
-.btn-ghost:hover:not(:disabled) { background: #1a1d2a; }
+.btn-ghost:hover:not(:disabled) { background: var(--hover-overlay); }
 
 .btn-danger {
   background: transparent;

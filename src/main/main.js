@@ -57,13 +57,25 @@ const DEFAULT_SETTINGS = {
   onLaunchAction: 'minimize', // 'minimize' | 'none'
   javaPathOverride: '',
   discordRpcEnabled: true,
+  theme: 'dark', // 'dark' | 'light'
+  onboardingSeen: false,
+  lastSeenVersion: '',
 };
 
 function loadSettings() {
   try {
     return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')) };
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    // No settings.json yet: either a brand-new install (show onboarding,
+    // stay silent about "what's new") or an existing user updating into
+    // this feature for the first time (profiles already exist) — skip
+    // onboarding and don't dump the whole changelog history on them.
+    const hasExistingProfiles = fs.readdirSync(PROFILES_DIR).some(f => f.endsWith('.json'));
+    return {
+      ...DEFAULT_SETTINGS,
+      onboardingSeen: hasExistingProfiles,
+      lastSeenVersion: hasExistingProfiles ? app.getVersion() : '',
+    };
   }
 }
 
@@ -419,6 +431,7 @@ ipcMain.handle('profiles:listRunning', () => [...runningProcesses.keys()]);
 
 // ── Settings ─────────────────────────────────────────────────────────────
 ipcMain.handle('settings:get', () => loadSettings());
+ipcMain.handle('app:getVersion', () => app.getVersion());
 ipcMain.handle('settings:save', (_, settings) => {
   const merged = saveSettings(settings);
   if (merged.discordRpcEnabled && !discordRpc) setupDiscordRPC();

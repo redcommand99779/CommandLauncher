@@ -5,6 +5,8 @@ import HomePage from './pages/HomePage';
 import ProfilesPage from './pages/ProfilesPage';
 import ModBrowserPage from './pages/ModBrowserPage';
 import SettingsPage from './pages/SettingsPage';
+import OnboardingModal from './components/OnboardingModal';
+import WhatsNewModal from './components/WhatsNewModal';
 
 const api = window.electronAPI || {};
 
@@ -12,13 +14,50 @@ export default function App() {
   const [account, setAccount] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState('home');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [whatsNew, setWhatsNew] = useState(null); // { fromVersion, toVersion }
 
   useEffect(() => {
     api.getAccount?.().then(acc => {
       setAccount(acc);
       setAuthLoading(false);
     });
+    // Apply the saved theme immediately, even before login, so the login
+    // screen itself isn't stuck on the default theme.
+    api.getSettings?.().then(s => {
+      if (s) document.documentElement.setAttribute('data-theme', s.theme || 'dark');
+    });
   }, []);
+
+  useEffect(() => {
+    if (!account) return;
+    (async () => {
+      const [settings, currentVersion] = await Promise.all([api.getSettings?.(), api.getAppVersion?.()]);
+      if (!settings) return;
+
+      if (!settings.onboardingSeen) {
+        setShowOnboarding(true);
+      } else if (currentVersion && settings.lastSeenVersion && settings.lastSeenVersion !== currentVersion) {
+        setWhatsNew({ fromVersion: settings.lastSeenVersion, toVersion: currentVersion });
+      } else if (currentVersion && settings.lastSeenVersion !== currentVersion) {
+        await api.saveSettings?.({ ...settings, lastSeenVersion: currentVersion });
+      }
+    })();
+  }, [account?.uuid]);
+
+  async function dismissOnboarding() {
+    setShowOnboarding(false);
+    const settings = await api.getSettings?.();
+    const currentVersion = await api.getAppVersion?.();
+    await api.saveSettings?.({ ...settings, onboardingSeen: true, lastSeenVersion: currentVersion || settings.lastSeenVersion });
+  }
+
+  async function dismissWhatsNew() {
+    const toVersion = whatsNew?.toVersion;
+    setWhatsNew(null);
+    const settings = await api.getSettings?.();
+    await api.saveSettings?.({ ...settings, lastSeenVersion: toVersion });
+  }
 
   async function handleLogout() {
     await api.logout?.();
@@ -60,6 +99,8 @@ export default function App() {
           </main>
         </>
       )}
+      {showOnboarding && <OnboardingModal onClose={dismissOnboarding} />}
+      {whatsNew && <WhatsNewModal fromVersion={whatsNew.fromVersion} toVersion={whatsNew.toVersion} onClose={dismissWhatsNew} />}
     </div>
   );
 }

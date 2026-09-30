@@ -16,6 +16,11 @@ export default function SettingsPage() {
     setSaved(false);
   }
 
+  function setTheme(value) {
+    set('theme', value);
+    document.documentElement.setAttribute('data-theme', value);
+  }
+
   async function handleSave() {
     setSaving(true);
     const result = await api.saveSettings?.(settings);
@@ -45,6 +50,14 @@ export default function SettingsPage() {
       </div>
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: 20, marginBottom: 16 }}>
+        <div className="form-group">
+          <label className="form-label">Theme</label>
+          <select className="form-select" value={settings.theme} onChange={e => setTheme(e.target.value)}>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+
         <div className="form-group">
           <label className="form-label">Default RAM for new profiles (GB)</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
