@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isProfileRunning: (id) => ipcRenderer.invoke('profiles:isRunning', id),
   listRunningProfiles: () => ipcRenderer.invoke('profiles:listRunning'),
   onProcessStatus: (cb) => ipcRenderer.on('process:status', (_, data) => cb(data)),
+  getCrashLogs: (id) => ipcRenderer.invoke('profiles:getCrashLogs', id),
+  readCrashLog: (logPath) => ipcRenderer.invoke('profiles:readCrashLog', logPath),
+  openCrashLog: (logPath) => ipcRenderer.invoke('profiles:openCrashLog', logPath),
+  deleteCrashLog: (logPath) => ipcRenderer.invoke('profiles:deleteCrashLog', logPath),
+
+  // Settings
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  pickJavaPath: () => ipcRenderer.invoke('settings:pickJavaPath'),
 
   // Versions
   listVersions: () => ipcRenderer.invoke('versions:list'),
@@ -38,6 +47,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   curseforgeGetFiles: (params) => ipcRenderer.invoke('curseforge:getFiles', params),
   curseforgeDownloadFile: (params) => ipcRenderer.invoke('curseforge:downloadFile', params),
   curseforgeInstallModpack: (params) => ipcRenderer.invoke('curseforge:installModpack', params),
+
+  // Mod updates
+  checkModUpdates: (params) => ipcRenderer.invoke('mods:checkUpdates', params),
+  applyModUpdate: (params) => ipcRenderer.invoke('mods:applyUpdate', params),
 
   // Launch
   launchMinecraft: (params) => ipcRenderer.invoke('minecraft:launch', params),

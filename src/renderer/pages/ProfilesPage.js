@@ -13,6 +13,7 @@ const CONTENT_TABS = [
   { id: 'shaders', label: 'Shaders', subFolder: 'shaderpacks', needsLoader: false },
   { id: 'datapacks', label: 'Datapacks', subFolder: 'datapacks', needsLoader: false },
   { id: 'welten', label: 'Worlds', subFolder: null, needsLoader: false },
+  { id: 'crashes', label: 'Crashes', subFolder: null, needsLoader: false },
 ];
 
 export default function ProfilesPage() {
@@ -24,12 +25,18 @@ export default function ProfilesPage() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [versions, setVersions] = useState(VERSION_FALLBACK);
+  const [defaultRam, setDefaultRam] = useState(4);
+  const [updateResults, setUpdateResults] = useState(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [applyingUpdate, setApplyingUpdate] = useState({});
+  const [crashLogs, setCrashLogs] = useState([]);
   const { launching, play, prepare } = useLaunch();
   const runningProfileIds = useRunningProfiles();
 
   useEffect(() => {
     loadProfiles();
     loadVersions();
+    api.getSettings?.().then(s => s && setDefaultRam(s.defaultRam));
   }, []);
 
   useEffect(() => {
@@ -37,7 +44,9 @@ export default function ProfilesPage() {
   }, [selected?.id]);
 
   useEffect(() => {
-    if (selected && contentTab !== 'welten') loadFolderItems(selected.id, contentTab);
+    if (selected && contentTab === 'crashes') loadCrashLogs(selected.id);
+    else if (selected && contentTab !== 'welten') loadFolderItems(selected.id, contentTab);
+    setUpdateResults(null);
   }, [selected?.id, contentTab]);
 
   async function loadProfiles() {
@@ -67,10 +76,57 @@ export default function ProfilesPage() {
     setFolderItems(items);
   }
 
+  async function loadCrashLogs(id) {
+    const logs = await api.getCrashLogs?.(id) || [];
+    setCrashLogs(logs);
+  }
+
+  async function handleDeleteCrashLog(logPath) {
+    await api.deleteCrashLog?.(logPath);
+    await loadCrashLogs(selected.id);
+  }
+
   async function handleRemoveItem(filename) {
     const subFolder = CONTENT_TABS.find(t => t.id === contentTab)?.subFolder || 'mods';
     await api.modrinthRemoveMod?.({ filename, profileId: selected.id, subFolder });
     await loadFolderItems(selected.id, contentTab);
+  }
+
+  async function handleCheckUpdates() {
+    const subFolder = CONTENT_TABS.find(t => t.id === contentTab)?.subFolder || 'mods';
+    setCheckingUpdates(true);
+    setUpdateResults(null);
+    try {
+      const results = await api.checkModUpdates?.({
+        profileId: selected.id,
+        gameVersion: selected.gameVersion,
+        modLoader: contentTab === 'mods' ? (selected.modLoader || 'Vanilla') : undefined,
+        subFolder,
+      }) || [];
+      setUpdateResults(results);
+    } finally {
+      setCheckingUpdates(false);
+    }
+  }
+
+  async function handleApplyUpdate(item) {
+    const subFolder = CONTENT_TABS.find(t => t.id === contentTab)?.subFolder || 'mods';
+    setApplyingUpdate(p => ({ ...p, [item.filename]: true }));
+    try {
+      const result = await api.applyModUpdate?.({
+        profileId: selected.id,
+        subFolder,
+        oldFilename: item.filename,
+        newFilename: item.newFilename,
+        downloadUrl: item.downloadUrl,
+      });
+      if (result?.success) {
+        setUpdateResults(prev => prev.filter(r => r.filename !== item.filename));
+        await loadFolderItems(selected.id, contentTab);
+      }
+    } finally {
+      setApplyingUpdate(p => ({ ...p, [item.filename]: false }));
+    }
   }
 
   function openCreate() {
@@ -204,6 +260,25 @@ export default function ProfilesPage() {
                     </div>
                   ))
                 )
+              ) : contentTab === 'crashes' ? (
+                crashLogs.length === 0 ? (
+                  <div className="card" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-4)' }}>
+                    <div style={{ fontSize: 28, marginBottom: 8 }}>✓</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-3)' }}>No crashes recorded</div>
+                  </div>
+                ) : (
+                  crashLogs.map(c => (
+                    <div key={c.filename} className="card" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ fontSize: 18 }}>💥</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.summary}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{new Date(c.mtime).toLocaleString()} · {c.filename}</div>
+                      </div>
+                      <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => api.openCrashLog?.(c.path)}>Open</button>
+                      <button className="btn-danger" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => handleDeleteCrashLog(c.path)}>✕</button>
+                    </div>
+                  ))
+                )
               ) : CONTENT_TABS.find(t => t.id === contentTab)?.needsLoader && (selected.modLoader || 'Vanilla') === 'Vanilla' ? (
                 <div className="card" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-4)' }}>
                   <div style={{ fontSize: 12 }}>Vanilla profiles don't support mods. Set a mod loader in "Edit".</div>
@@ -213,16 +288,46 @@ export default function ProfilesPage() {
                   <div style={{ fontSize: 12 }}>Nothing installed. Use the Mod Browser to add some.</div>
                 </div>
               ) : (
-                folderItems.map(m => (
-                  <div key={m.filename} className="card" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ fontSize: 18 }}>📦</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.filename}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{(m.size / 1024).toFixed(0)} KB</div>
-                    </div>
-                    <button className="btn-danger" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => handleRemoveItem(m.filename)}>✕</button>
+                <>
+                  <div style={{ marginBottom: 10 }}>
+                    <button className="btn-ghost" onClick={handleCheckUpdates} disabled={checkingUpdates}>
+                      {checkingUpdates ? 'Checking...' : '⟳ Check for updates'}
+                    </button>
+                    {updateResults && (
+                      <span style={{ marginLeft: 10, fontSize: 12, color: 'var(--text-4)' }}>
+                        {updateResults.filter(r => r.updateAvailable).length > 0
+                          ? `${updateResults.filter(r => r.updateAvailable).length} update(s) available`
+                          : 'Everything is up to date'}
+                      </span>
+                    )}
                   </div>
-                ))
+                  {folderItems.map(m => {
+                    const upd = updateResults?.find(r => r.filename === m.filename && r.updateAvailable);
+                    return (
+                      <div key={m.filename} className="card" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ fontSize: 18 }}>📦</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.filename}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-4)' }}>
+                            {(m.size / 1024).toFixed(0)} KB
+                            {upd && <span style={{ color: 'var(--accent-light)' }}> · update: {upd.latestVersion}</span>}
+                          </div>
+                        </div>
+                        {upd && (
+                          <button
+                            className="btn-primary"
+                            style={{ padding: '4px 10px', fontSize: 11 }}
+                            onClick={() => handleApplyUpdate(upd)}
+                            disabled={!!applyingUpdate[m.filename]}
+                          >
+                            {applyingUpdate[m.filename] ? '⏳' : '⬆ Update'}
+                          </button>
+                        )}
+                        <button className="btn-danger" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => handleRemoveItem(m.filename)}>✕</button>
+                      </div>
+                    );
+                  })}
+                </>
               )}
 
               <div style={{ marginTop: 20 }}>
@@ -237,6 +342,7 @@ export default function ProfilesPage() {
         <ProfileModal
           profile={editing}
           versions={versions}
+          defaultRam={defaultRam}
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditing(null); }}
         />
@@ -245,13 +351,13 @@ export default function ProfilesPage() {
   );
 }
 
-function ProfileModal({ profile, versions, onSave, onClose }) {
+function ProfileModal({ profile, versions, defaultRam, onSave, onClose }) {
   const [form, setForm] = useState({
     id: profile?.id || uuidv4(),
     name: profile?.name || '',
     gameVersion: profile?.gameVersion || versions[0] || '1.21.4',
     modLoader: profile?.modLoader || 'Vanilla',
-    ram: profile?.ram || 4,
+    ram: profile?.ram || defaultRam || 4,
     icon: profile?.icon || '🎮',
     createdAt: profile?.createdAt || new Date().toISOString(),
   });

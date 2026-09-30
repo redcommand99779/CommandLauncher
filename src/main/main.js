@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const https = require('https');
 const http = require('http');
 const { execFile } = require('child_process');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
@@ -43,6 +44,28 @@ const VERSIONS_DIR = path.join(DATA_DIR, 'versions');
 fs.ensureDirSync(DATA_DIR);
 fs.ensureDirSync(PROFILES_DIR);
 fs.ensureDirSync(VERSIONS_DIR);
+
+// ── Global Settings ─────────────────────────────────────────────────────
+const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
+const DEFAULT_SETTINGS = {
+  defaultRam: 4,
+  onLaunchAction: 'minimize', // 'minimize' | 'none'
+  javaPathOverride: '',
+};
+
+function loadSettings() {
+  try {
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')) };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings(settings) {
+  const merged = { ...DEFAULT_SETTINGS, ...settings };
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2));
+  return merged;
+}
 
 const APP_ICON_PATH = path.join(__dirname, '../../assets/icon.png');
 
@@ -221,8 +244,58 @@ ipcMain.handle('profiles:getMods', (_, profileId, subFolder = 'mods') => {
   } catch { return []; }
 });
 
+// ── Crash Logs (hs_err_pid*.log, written via customLaunch's -XX:ErrorFile) ─
+ipcMain.handle('profiles:getCrashLogs', (_, profileId) => {
+  const profileDir = path.join(PROFILES_DIR, profileId);
+  try {
+    return fs.readdirSync(profileDir)
+      .filter(f => /^hs_err_pid\d+\.log$/i.test(f))
+      .map(f => {
+        const fullPath = path.join(profileDir, f);
+        const stat = fs.statSync(fullPath);
+        let summary = 'Unknown crash';
+        try {
+          const content = fs.readFileSync(fullPath, 'utf8');
+          const errorLine = content.match(/^#\s+((?:EXCEPTION_|SIG)\w+.*)$/m)?.[1]?.trim();
+          const frame = content.match(/# Problematic frame:\r?\n#\s*(.+)/)?.[1]?.trim();
+          summary = [errorLine, frame].filter(Boolean).join(' — ') || summary;
+        } catch {}
+        return { filename: f, path: fullPath, mtime: stat.mtimeMs, size: stat.size, summary };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch { return []; }
+});
+
+ipcMain.handle('profiles:readCrashLog', (_, logPath) => {
+  try { return fs.readFileSync(logPath, 'utf8'); }
+  catch (e) { return `Error reading log: ${e.message}`; }
+});
+
+ipcMain.handle('profiles:openCrashLog', (_, logPath) => {
+  shell.openPath(logPath);
+  return { success: true };
+});
+
+ipcMain.handle('profiles:deleteCrashLog', (_, logPath) => {
+  try { if (fs.existsSync(logPath)) fs.removeSync(logPath); return { success: true }; }
+  catch (e) { return { success: false, error: e.message }; }
+});
+
 ipcMain.handle('profiles:isRunning', (_, profileId) => runningProcesses.has(profileId));
 ipcMain.handle('profiles:listRunning', () => [...runningProcesses.keys()]);
+
+// ── Settings ─────────────────────────────────────────────────────────────
+ipcMain.handle('settings:get', () => loadSettings());
+ipcMain.handle('settings:save', (_, settings) => saveSettings(settings));
+ipcMain.handle('settings:pickJavaPath', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select javaw.exe',
+    properties: ['openFile'],
+    filters: [{ name: 'Java executable', extensions: ['exe'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+  return result.filePaths[0];
+});
 
 // ── Minecraft Versions ───────────────────────────────────────────────────
 ipcMain.handle('versions:list', async () => {
@@ -422,7 +495,7 @@ ipcMain.handle('curseforge:installModpack', async (_, { modId, fileId, packName,
       name: packName,
       gameVersion,
       modLoader,
-      ram: ram || 4,
+      ram: ram || loadSettings().defaultRam,
       icon: '🗂',
       createdAt: new Date().toISOString(),
     };
@@ -534,7 +607,7 @@ ipcMain.handle('modrinth:installModpack', async (_, { url, filename, packName, r
       name: packName,
       gameVersion,
       modLoader,
-      ram: ram || 4,
+      ram: ram || loadSettings().defaultRam,
       icon: '🗂',
       createdAt: new Date().toISOString(),
     };
@@ -552,6 +625,170 @@ ipcMain.handle('modrinth:installModpack', async (_, { url, filename, packName, r
     return { success: false, error: e.message };
   } finally {
     fs.removeSync(tmpDir);
+  }
+});
+
+// ── Mod Update Checking ──────────────────────────────────────────────────
+// Identifies installed mods by content hash instead of stored metadata, so
+// this also works for mods that were dropped in manually or installed
+// before update-checking existed.
+function sha1Hex(buffer) {
+  return crypto.createHash('sha1').update(buffer).digest('hex');
+}
+
+// CurseForge's fingerprint: murmur2 (32-bit, seed 1) over the file with
+// whitespace bytes (tab/lf/cr/space) stripped first — the same algorithm
+// every third-party CF-aware launcher implements, since CF's API itself
+// only accepts this specific normalized hash for fingerprint lookups.
+function murmur2_32(buffer, seed) {
+  const m = 0x5bd1e995;
+  const r = 24;
+  let len = buffer.length;
+  let h = (seed ^ len) >>> 0;
+  let i = 0;
+  while (len >= 4) {
+    let k = (buffer[i] & 0xff) | ((buffer[i + 1] & 0xff) << 8) | ((buffer[i + 2] & 0xff) << 16) | ((buffer[i + 3] & 0xff) << 24);
+    k = Math.imul(k, m) >>> 0;
+    k ^= k >>> r;
+    k = Math.imul(k, m) >>> 0;
+    h = Math.imul(h, m) >>> 0;
+    h = (h ^ k) >>> 0;
+    i += 4;
+    len -= 4;
+  }
+  if (len === 3) h ^= (buffer[i + 2] & 0xff) << 16;
+  if (len >= 2) h ^= (buffer[i + 1] & 0xff) << 8;
+  if (len >= 1) {
+    h ^= (buffer[i] & 0xff);
+    h = Math.imul(h, m) >>> 0;
+  }
+  h ^= h >>> 13;
+  h = Math.imul(h, m) >>> 0;
+  h ^= h >>> 15;
+  return h >>> 0;
+}
+
+function curseforgeFingerprint(buffer) {
+  const filtered = Buffer.alloc(buffer.length);
+  let len = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    const b = buffer[i];
+    if (b !== 9 && b !== 10 && b !== 13 && b !== 32) filtered[len++] = b;
+  }
+  return murmur2_32(filtered.subarray(0, len), 1);
+}
+
+ipcMain.handle('mods:checkUpdates', async (_, { profileId, gameVersion, modLoader, subFolder = 'mods' }) => {
+  const dir = path.join(PROFILES_DIR, profileId, subFolder);
+  fs.ensureDirSync(dir);
+  const files = fs.readdirSync(dir).filter(f => !fs.statSync(path.join(dir, f)).isDirectory());
+  if (!files.length) return [];
+
+  const fileBuffers = new Map();
+  for (const f of files) fileBuffers.set(f, fs.readFileSync(path.join(dir, f)));
+
+  const results = [];
+  const matchedFiles = new Set();
+
+  // ── Modrinth: bulk SHA1 hash lookup ──
+  try {
+    const sha1ToFile = new Map();
+    for (const [f, buf] of fileBuffers) sha1ToFile.set(sha1Hex(buf), f);
+    const hashes = [...sha1ToFile.keys()];
+    if (hashes.length) {
+      const matches = await httpPostJson('https://api.modrinth.com/v2/version_files', {
+        'User-Agent': 'CommandLauncher/1.0.0', 'Content-Type': 'application/json',
+      }, { hashes, algorithm: 'sha1' });
+      for (const [hash, version] of Object.entries(matches || {})) {
+        const filename = sha1ToFile.get(hash);
+        if (!filename || matchedFiles.has(filename)) continue;
+        matchedFiles.add(filename);
+        try {
+          const params = new URLSearchParams();
+          if (gameVersion) params.set('game_versions', JSON.stringify([gameVersion]));
+          if (modLoader) params.set('loaders', JSON.stringify([modLoader.toLowerCase()]));
+          const versions = await httpGet(
+            `https://api.modrinth.com/v2/project/${version.project_id}/version?${params}`,
+            { 'User-Agent': 'CommandLauncher/1.0.0' }
+          );
+          const latest = versions?.[0];
+          const latestFile = latest?.files?.find(f => f.primary) || latest?.files?.[0];
+          results.push({
+            filename,
+            name: version.name || filename,
+            source: 'modrinth',
+            currentVersion: version.version_number,
+            latestVersion: latest?.version_number || version.version_number,
+            updateAvailable: !!latest && latest.id !== version.id,
+            downloadUrl: latestFile?.url,
+            newFilename: latestFile?.filename,
+          });
+        } catch (e) {
+          console.error('[mods:checkUpdates:modrinth:version]', e);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[mods:checkUpdates:modrinth]', e);
+  }
+
+  // ── CurseForge: bulk fingerprint lookup ──
+  try {
+    const fpToFile = new Map();
+    for (const [f, buf] of fileBuffers) {
+      if (matchedFiles.has(f)) continue;
+      fpToFile.set(curseforgeFingerprint(buf), f);
+    }
+    const fingerprints = [...fpToFile.keys()];
+    if (fingerprints.length) {
+      const res = await httpPostJson(`https://api.curseforge.com/v1/fingerprints/${CURSEFORGE_GAME_ID}`, {
+        'x-api-key': CURSEFORGE_API_KEY, 'Accept': 'application/json',
+      }, { fingerprints });
+      for (const match of res?.data?.exactMatches || []) {
+        const filename = fpToFile.get(match.file.fileFingerprint);
+        if (!filename || matchedFiles.has(filename)) continue;
+        matchedFiles.add(filename);
+        try {
+          const loaderId = modLoader ? CURSEFORGE_LOADER_IDS[modLoader] : undefined;
+          const params = new URLSearchParams({ pageSize: '1' });
+          if (gameVersion) params.set('gameVersion', gameVersion);
+          if (loaderId) params.set('modLoaderType', String(loaderId));
+          const filesRes = await curseforgeGet(`/v1/mods/${match.file.modId}/files?${params}`);
+          const latest = filesRes?.data?.[0];
+          results.push({
+            filename,
+            name: match.file.displayName || filename,
+            source: 'curseforge',
+            currentVersion: match.file.displayName,
+            latestVersion: latest?.displayName || match.file.displayName,
+            updateAvailable: !!latest && latest.id !== match.file.id,
+            downloadUrl: latest?.downloadUrl,
+            newFilename: latest?.fileName,
+          });
+        } catch (e) {
+          console.error('[mods:checkUpdates:curseforge:files]', e);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[mods:checkUpdates:curseforge]', e);
+  }
+
+  return results;
+});
+
+ipcMain.handle('mods:applyUpdate', async (_, { profileId, subFolder = 'mods', oldFilename, newFilename, downloadUrl }) => {
+  if (!downloadUrl || !newFilename) return { success: false, error: 'No download link available for this update.' };
+  const dir = path.join(PROFILES_DIR, profileId, subFolder);
+  try {
+    await downloadFile(downloadUrl, path.join(dir, newFilename));
+    if (oldFilename && oldFilename !== newFilename) {
+      const oldPath = path.join(dir, oldFilename);
+      if (fs.existsSync(oldPath)) fs.removeSync(oldPath);
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
   }
 });
 
@@ -643,7 +880,7 @@ ipcMain.handle('minecraft:launch', async (_, { profile }) => {
     // it's been crashing intermittently on OpenGL/SDL init with an access violation
     // that a reference launcher (CurseForge) never hits, and GPU context contention
     // between two concurrently-compositing processes is a plausible, testable cause.
-    mainWindow?.minimize();
+    if (loadSettings().onLaunchAction === 'minimize') mainWindow?.minimize();
 
     const { proc } = await launchMinecraft(opts, (emitter) => {
       emitter.on('debug', (e) => send(e, 'info'));
@@ -979,6 +1216,12 @@ async function ensureMojangRuntime(component, send) {
 // several patch releases), and using the older of the two would silently
 // reintroduce bugs a newer patch already fixed.
 async function resolveJavaPath(gameVersion, send) {
+  const override = loadSettings().javaPathOverride;
+  if (override && fs.existsSync(override)) {
+    send(`Using Java path from settings: ${override}`);
+    return override;
+  }
+
   const { majorVersion: requiredMajor, component } = await getJavaRuntimeInfo(gameVersion);
   const local = await findJava(requiredMajor);
 

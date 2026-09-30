@@ -4,6 +4,7 @@ import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
 import ProfilesPage from './pages/ProfilesPage';
 import ModBrowserPage from './pages/ModBrowserPage';
+import SettingsPage from './pages/SettingsPage';
 
 const api = window.electronAPI || {};
 
@@ -40,7 +41,7 @@ export default function App() {
       ) : (
         <>
           <nav style={{ display: 'flex', gap: 2, padding: '8px 20px 0', borderBottom: '0.5px solid var(--border)', flexShrink: 0 }}>
-            {[['home', 'Home'], ['profiles', 'Profiles'], ['mods', 'Mod Browser']].map(([id, label]) => (
+            {[['home', 'Home'], ['profiles', 'Profiles'], ['mods', 'Mod Browser'], ['settings', 'Settings']].map(([id, label]) => (
               <button key={id} onClick={() => setPage(id)} style={{
                 padding: '8px 16px', background: 'transparent', border: 'none',
                 borderBottom: `2px solid ${page === id ? 'var(--accent)' : 'transparent'}`,
@@ -52,6 +53,7 @@ export default function App() {
             {page === 'home' && <HomePage account={account} setPage={setPage} />}
             {page === 'profiles' && <ProfilesPage />}
             {page === 'mods' && <ModBrowserPage />}
+            {page === 'settings' && <SettingsPage />}
           </main>
         </>
       )}
