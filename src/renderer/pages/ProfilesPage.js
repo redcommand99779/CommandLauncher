@@ -32,6 +32,7 @@ export default function ProfilesPage() {
   const [applyingUpdate, setApplyingUpdate] = useState({});
   const [crashLogs, setCrashLogs] = useState([]);
   const [screenshots, setScreenshots] = useState([]);
+  const [lightboxShot, setLightboxShot] = useState(null);
   const { launching, play, prepare } = useLaunch();
   const runningProfileIds = useRunningProfiles();
 
@@ -296,7 +297,7 @@ export default function ProfilesPage() {
                         <img
                           src={s.url}
                           alt={s.filename}
-                          onClick={() => api.openScreenshot?.(s.path)}
+                          onClick={() => setLightboxShot(s)}
                           style={{ width: '100%', height: 100, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', display: 'block' }}
                         />
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
@@ -393,6 +394,26 @@ export default function ProfilesPage() {
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditing(null); }}
         />
+      )}
+
+      {lightboxShot && (
+        <div className="modal-overlay" onClick={() => setLightboxShot(null)}>
+          <div style={{ maxWidth: '90vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }} onClick={e => e.stopPropagation()}>
+            <img src={lightboxShot.url} alt={lightboxShot.filename} style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: 8, display: 'block' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{lightboxShot.filename}</div>
+              <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => api.openScreenshot?.(lightboxShot.path)}>Open externally</button>
+              <button
+                className="btn-danger"
+                style={{ padding: '4px 10px', fontSize: 11 }}
+                onClick={() => { handleDeleteScreenshot(lightboxShot.path); setLightboxShot(null); }}
+              >
+                ✕ Delete
+              </button>
+              <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setLightboxShot(null)}>Close</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

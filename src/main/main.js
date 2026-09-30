@@ -308,7 +308,12 @@ ipcMain.handle('profiles:getScreenshots', (_, profileId) => {
       .map(f => {
         const fullPath = path.join(dir, f);
         const stat = fs.statSync(fullPath);
-        return { filename: f, path: fullPath, url: `file://${fullPath.replace(/\\/g, '/')}`, mtime: stat.mtimeMs, size: stat.size };
+        // Electron blocks file:// resource loads from a non-file-origin renderer
+        // (always true in dev, where the page is served from localhost); a data
+        // URL sidesteps that restriction entirely and works identically in both
+        // dev and the packaged app.
+        const url = `data:image/png;base64,${fs.readFileSync(fullPath).toString('base64')}`;
+        return { filename: f, path: fullPath, url, mtime: stat.mtimeMs, size: stat.size };
       })
       .sort((a, b) => b.mtime - a.mtime);
   } catch { return []; }
