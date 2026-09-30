@@ -10,4 +10,5 @@ export const CHANGELOG = [
   { version: '0.1.7', notes: ['Added playtime tracking', 'Added world export/import', 'Added saved servers with quick-join', 'Added support for multiple Microsoft accounts', 'Fixed a multiplayer "Invalid session" error'] },
   { version: '0.1.8', notes: ['Added a light theme', 'Added a first-run onboarding guide', 'Added this what\'s-new screen'] },
   { version: '0.1.9', notes: ['Added profile backup: export/import all profiles as a .zip', 'Added an About section in Settings', 'Added keyboard shortcuts (Ctrl+1-4) to switch tabs'] },
+  { version: '0.2.0', notes: ['Added a Discord link in Settings for bug reports and feature suggestions'] },
 ];

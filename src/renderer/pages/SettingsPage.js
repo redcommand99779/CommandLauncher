@@ -152,11 +152,19 @@ export default function SettingsPage() {
         <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
           A lightweight Minecraft launcher. Mod search powered by Modrinth and CurseForge.
         </div>
-        <div
-          style={{ fontSize: 12, color: 'var(--accent-light)', cursor: 'pointer', marginTop: 4 }}
-          onClick={() => api.openExternal?.('https://github.com/redcommand99779/CommandLauncher')}
-        >
-          github.com/redcommand99779/CommandLauncher
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+          <div
+            style={{ fontSize: 12, color: 'var(--accent-light)', cursor: 'pointer' }}
+            onClick={() => api.openExternal?.('https://github.com/redcommand99779/CommandLauncher')}
+          >
+            🔗 github.com/redcommand99779/CommandLauncher
+          </div>
+          <div
+            style={{ fontSize: 12, color: 'var(--accent-light)', cursor: 'pointer' }}
+            onClick={() => api.openExternal?.('https://discord.gg/AQ8V94qhjg')}
+          >
+            💬 Join the Discord — report bugs, suggest features
+          </div>
         </div>
       </div>
     </div>
