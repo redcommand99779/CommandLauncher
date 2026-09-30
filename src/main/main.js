@@ -9,7 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
 const { Client: DiscordRPCClient } = require('@xhayper/discord-rpc');
-const { microsoftLogin, getValidAccount, logout } = require('./auth');
+const { microsoftLogin, getValidAccount, listAccounts, switchAccount, removeAccount, logout, CLIENT_ID: MC_CLIENT_ID } = require('./auth');
 const { launchMinecraft } = require('./customLaunch');
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -217,6 +217,15 @@ ipcMain.handle('auth:logout', () => {
   return { success: true };
 });
 
+ipcMain.handle('auth:listAccounts', () => listAccounts());
+
+ipcMain.handle('auth:switchAccount', async (_, uuid) => await switchAccount(uuid));
+
+ipcMain.handle('auth:removeAccount', (_, uuid) => {
+  removeAccount(uuid);
+  return { success: true };
+});
+
 // ── Window Controls ──────────────────────────────────────────────────────
 ipcMain.on('window-minimize', () => mainWindow.minimize());
 ipcMain.on('window-maximize', () => mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize());
@@ -280,6 +289,45 @@ ipcMain.handle('profiles:getWorlds', (_, profileId) => {
       fs.statSync(path.join(savesDir, f)).isDirectory()
     ).map(f => ({ name: f }));
   } catch { return []; }
+});
+
+ipcMain.handle('profiles:exportWorld', async (_, { profileId, worldName }) => {
+  const worldDir = path.join(PROFILES_DIR, profileId, 'saves', worldName);
+  if (!fs.existsSync(worldDir)) return { success: false, error: 'World not found' };
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export world',
+    defaultPath: `${worldName}.zip`,
+    filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+  });
+  if (result.canceled || !result.filePath) return { success: false, error: 'Cancelled' };
+
+  try {
+    const zip = new AdmZip();
+    zip.addLocalFolder(worldDir, worldName);
+    zip.writeZip(result.filePath);
+    return { success: true, path: result.filePath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('profiles:importWorld', async (_, profileId) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import world',
+    properties: ['openFile'],
+    filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return { success: false, error: 'Cancelled' };
+
+  try {
+    const savesDir = path.join(PROFILES_DIR, profileId, 'saves');
+    fs.ensureDirSync(savesDir);
+    new AdmZip(result.filePaths[0]).extractAllTo(savesDir, true);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
 ipcMain.handle('profiles:openFolder', (_, profileId) => {
@@ -882,8 +930,19 @@ ipcMain.handle('mods:applyUpdate', async (_, { profileId, subFolder = 'mods', ol
   }
 });
 
+function addPlaytime(profileId, ms) {
+  try {
+    const filePath = path.join(PROFILES_DIR, `${profileId}.json`);
+    const profile = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    profile.totalPlaytimeMs = (profile.totalPlaytimeMs || 0) + ms;
+    fs.writeFileSync(filePath, JSON.stringify(profile, null, 2));
+  } catch (e) {
+    console.error('[playtime:error]', e);
+  }
+}
+
 // ── Launch Minecraft ─────────────────────────────────────────────────────
-ipcMain.handle('minecraft:launch', async (_, { profile }) => {
+ipcMain.handle('minecraft:launch', async (_, { profile, connectTo }) => {
   if (runningProcesses.has(profile.id)) {
     return { success: false, error: 'A session is already running for this profile.' };
   }
@@ -932,7 +991,11 @@ ipcMain.handle('minecraft:launch', async (_, { profile }) => {
       uuid: account.uuid,
       name: account.username,
       user_properties: '{}',
-      meta: { type: 'msa' },
+      // xuid/clientId feed ${auth_xuid}/${clientid} in the launch args; without
+      // them the game sends bogus values that real online-mode servers (not
+      // singleplayer/world loading, which never checks these) reject with
+      // "Invalid session" on join.
+      meta: { type: 'msa', xuid: account.xuid, clientId: MC_CLIENT_ID },
     };
 
     const opts = {
@@ -966,12 +1029,25 @@ ipcMain.handle('minecraft:launch', async (_, { profile }) => {
       ],
     };
 
+    if (connectTo) {
+      // Quick Play (--quickPlayMultiplayer) only exists from 1.20 onward;
+      // older versions need the legacy --server/--port pair instead, which
+      // MCLC's quickPlay type "legacy" still produces. Only classic "1.x"
+      // versions below 1.20 predate Quick Play — any other scheme (including
+      // newer year-based version strings) postdates its introduction.
+      const [major, minor] = profile.gameVersion.split('.').map(Number);
+      const supportsQuickPlay = !(major === 1 && minor < 20);
+      opts.quickPlay = { type: supportsQuickPlay ? 'multiplayer' : 'legacy', identifier: connectTo };
+      send(`Connecting to ${connectTo} on launch...`);
+    }
+
     // Minimize our own GPU-accelerated window before spawning the game process:
     // it's been crashing intermittently on OpenGL/SDL init with an access violation
     // that a reference launcher (CurseForge) never hits, and GPU context contention
     // between two concurrently-compositing processes is a plausible, testable cause.
     if (loadSettings().onLaunchAction === 'minimize') mainWindow?.minimize();
 
+    const launchTime = Date.now();
     const { proc } = await launchMinecraft(opts, (emitter) => {
       emitter.on('debug', (e) => send(e, 'info'));
       emitter.on('data', (e) => send(e, 'info'));
@@ -981,6 +1057,7 @@ ipcMain.handle('minecraft:launch', async (_, { profile }) => {
       emitter.on('close', (code) => {
         send(`Minecraft exited (code ${code})`, 'info');
         setProfileRunning(profile.id, false);
+        addPlaytime(profile.id, Date.now() - launchTime);
         setDiscordPresence({ details: 'Browsing profiles', startTimestamp: Date.now() });
       });
     });

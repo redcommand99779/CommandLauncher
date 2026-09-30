@@ -10,12 +10,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   microsoftLogin: () => ipcRenderer.invoke('auth:microsoftLogin'),
   getAccount: () => ipcRenderer.invoke('auth:getAccount'),
   logout: () => ipcRenderer.invoke('auth:logout'),
+  listAccounts: () => ipcRenderer.invoke('auth:listAccounts'),
+  switchAccount: (uuid) => ipcRenderer.invoke('auth:switchAccount', uuid),
+  removeAccount: (uuid) => ipcRenderer.invoke('auth:removeAccount', uuid),
 
   // Profiles
   listProfiles: () => ipcRenderer.invoke('profiles:list'),
   saveProfile: (profile) => ipcRenderer.invoke('profiles:save', profile),
   deleteProfile: (id) => ipcRenderer.invoke('profiles:delete', id),
   duplicateProfile: (id) => ipcRenderer.invoke('profiles:duplicate', id),
+  exportWorld: (params) => ipcRenderer.invoke('profiles:exportWorld', params),
+  importWorld: (profileId) => ipcRenderer.invoke('profiles:importWorld', profileId),
   getProfileWorlds: (id) => ipcRenderer.invoke('profiles:getWorlds', id),
   openProfileFolder: (id) => ipcRenderer.invoke('profiles:openFolder', id),
   getProfileMods: (id, subFolder) => ipcRenderer.invoke('profiles:getMods', id, subFolder),

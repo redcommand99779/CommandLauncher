@@ -22,7 +22,10 @@ export default function App() {
 
   async function handleLogout() {
     await api.logout?.();
-    setAccount(null);
+    // logout() switches to another saved account if one remains, rather than
+    // always clearing to the login screen, so re-fetch the new active state.
+    const next = await api.getAccount?.();
+    setAccount(next);
   }
 
   if (authLoading) {
@@ -35,7 +38,7 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      <TitleBar account={account} onLogout={handleLogout} />
+      <TitleBar account={account} onLogout={handleLogout} onAccountChange={setAccount} />
       {!account ? (
         <LoginPage onLogin={setAccount} />
       ) : (

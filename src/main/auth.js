@@ -5,6 +5,16 @@ const Store = require('electron-store');
 
 const store = new Store();
 
+// One-time migration from the old single-account key to the multi-account shape.
+if (store.has('account') && !store.has('accounts')) {
+  const legacy = store.get('account');
+  if (legacy?.uuid) {
+    store.set('accounts', { [legacy.uuid]: legacy });
+    store.set('activeAccountId', legacy.uuid);
+  }
+  store.delete('account');
+}
+
 // Microsoft OAuth - using Minecraft's official client ID (same as Prism/MultiMC)
 const CLIENT_ID = '00000000402b5328';
 const REDIRECT_URI = 'https://login.live.com/oauth20_desktop.srf';
@@ -137,6 +147,7 @@ async function microsoftLogin() {
   if (!xbl.Token) throw new Error('Xbox Live error');
 
   const uhs = xbl.DisplayClaims?.xui?.[0]?.uhs;
+  const xuid = xbl.DisplayClaims?.xui?.[0]?.xid;
   const xsts = await getXSTSToken(xbl.Token);
   if (!xsts.Token) {
     if (xsts.XErr === 2148916233) throw new Error('No Microsoft account — please create a Microsoft account');
@@ -157,41 +168,84 @@ async function microsoftLogin() {
     refreshToken: msToken.refresh_token,
     expiresAt: Date.now() + (msToken.expires_in * 1000),
     skins: profile.skins || [],
+    xuid,
     loggedIn: true,
   };
 
-  store.set('account', account);
+  const accounts = store.get('accounts') || {};
+  accounts[account.uuid] = account;
+  store.set('accounts', accounts);
+  store.set('activeAccountId', account.uuid);
   return account;
 }
 
-// Auto refresh if needed
+async function refreshAccount(account) {
+  const refreshed = await refreshMicrosoftToken(account.refreshToken);
+  const xbl = await getXboxToken(refreshed.access_token);
+  const uhs = xbl.DisplayClaims?.xui?.[0]?.uhs;
+  const xuid = xbl.DisplayClaims?.xui?.[0]?.xid;
+  const xsts = await getXSTSToken(xbl.Token);
+  const mc = await getMinecraftToken(uhs, xsts.Token);
+  const updated = {
+    ...account,
+    accessToken: mc.access_token,
+    refreshToken: refreshed.refresh_token || account.refreshToken,
+    expiresAt: Date.now() + (refreshed.expires_in * 1000),
+    xuid: xuid || account.xuid,
+  };
+  const accounts = store.get('accounts') || {};
+  accounts[updated.uuid] = updated;
+  store.set('accounts', accounts);
+  return updated;
+}
+
+// Returns the currently active account, refreshing its token if needed.
 async function getValidAccount() {
-  const account = store.get('account');
+  const activeId = store.get('activeAccountId');
+  const accounts = store.get('accounts') || {};
+  const account = activeId ? accounts[activeId] : null;
   if (!account) return null;
   if (Date.now() < account.expiresAt - 60000) return account;
 
   try {
-    const refreshed = await refreshMicrosoftToken(account.refreshToken);
-    const xbl = await getXboxToken(refreshed.access_token);
-    const uhs = xbl.DisplayClaims?.xui?.[0]?.uhs;
-    const xsts = await getXSTSToken(xbl.Token);
-    const mc = await getMinecraftToken(uhs, xsts.Token);
-    const updated = {
-      ...account,
-      accessToken: mc.access_token,
-      refreshToken: refreshed.refresh_token || account.refreshToken,
-      expiresAt: Date.now() + (refreshed.expires_in * 1000),
-    };
-    store.set('account', updated);
-    return updated;
+    return await refreshAccount(account);
   } catch {
-    store.delete('account');
+    removeAccount(account.uuid);
     return null;
   }
 }
 
-function logout() {
-  store.delete('account');
+function listAccounts() {
+  const accounts = store.get('accounts') || {};
+  return Object.values(accounts);
 }
 
-module.exports = { microsoftLogin, getValidAccount, logout };
+async function switchAccount(uuid) {
+  const accounts = store.get('accounts') || {};
+  const account = accounts[uuid];
+  if (!account) return null;
+  store.set('activeAccountId', uuid);
+  return await getValidAccount();
+}
+
+// Removes a stored account. If it was the active one, switches to another
+// saved account when available, otherwise clears the active pointer.
+function removeAccount(uuid) {
+  const accounts = store.get('accounts') || {};
+  delete accounts[uuid];
+  store.set('accounts', accounts);
+
+  if (store.get('activeAccountId') === uuid) {
+    const remaining = Object.keys(accounts);
+    store.set('activeAccountId', remaining[0] || null);
+  }
+}
+
+// Signs out of the currently active account (switches to another saved
+// account if one remains, otherwise the app falls back to the login screen).
+function logout() {
+  const activeId = store.get('activeAccountId');
+  if (activeId) removeAccount(activeId);
+}
+
+module.exports = { microsoftLogin, getValidAccount, listAccounts, switchAccount, removeAccount, logout, CLIENT_ID };

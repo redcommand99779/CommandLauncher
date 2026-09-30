@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import useLaunch from '../hooks/useLaunch';
 import useRunningProfiles from '../hooks/useRunningProfiles';
+import { formatPlaytime } from '../utils';
 
 const api = window.electronAPI || {};
 
@@ -37,6 +38,9 @@ export default function HomePage({ account, setPage }) {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{p.gameVersion} · {p.modLoader || 'Vanilla'}</div>
+                  {formatPlaytime(p.totalPlaytimeMs) && (
+                    <div style={{ fontSize: 10, color: 'var(--text-4)' }}>{formatPlaytime(p.totalPlaytimeMs)}</div>
+                  )}
                 </div>
               </div>
               <button

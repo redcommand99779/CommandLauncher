@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import useLaunch from '../hooks/useLaunch';
 import useRunningProfiles from '../hooks/useRunningProfiles';
+import { formatPlaytime } from '../utils';
 
 const api = window.electronAPI || {};
 const ICONS = ['🎮', '⚔️', '🏰', '🌲', '⛏️', '🐉'];
@@ -13,6 +14,7 @@ const CONTENT_TABS = [
   { id: 'shaders', label: 'Shaders', subFolder: 'shaderpacks', needsLoader: false },
   { id: 'datapacks', label: 'Datapacks', subFolder: 'datapacks', needsLoader: false },
   { id: 'welten', label: 'Worlds', subFolder: null, needsLoader: false },
+  { id: 'servers', label: 'Servers', subFolder: null, needsLoader: false },
   { id: 'screenshots', label: 'Screenshots', subFolder: null, needsLoader: false },
   { id: 'crashes', label: 'Crashes', subFolder: null, needsLoader: false },
 ];
@@ -33,6 +35,9 @@ export default function ProfilesPage() {
   const [crashLogs, setCrashLogs] = useState([]);
   const [screenshots, setScreenshots] = useState([]);
   const [lightboxShot, setLightboxShot] = useState(null);
+  const [worldStatusMsg, setWorldStatusMsg] = useState('');
+  const [newServerName, setNewServerName] = useState('');
+  const [newServerAddress, setNewServerAddress] = useState('');
   const { launching, play, prepare } = useLaunch();
   const runningProfileIds = useRunningProfiles();
 
@@ -172,6 +177,44 @@ export default function ProfilesPage() {
     await loadProfiles();
   }
 
+  async function handleExportWorld(worldName) {
+    const result = await api.exportWorld?.({ profileId: selected.id, worldName });
+    if (result?.success) {
+      setWorldStatusMsg(`✓ Exported to ${result.path}`);
+    } else if (result?.error && result.error !== 'Cancelled') {
+      setWorldStatusMsg(`❌ ${result.error}`);
+    }
+  }
+
+  async function handleImportWorld() {
+    const result = await api.importWorld?.(selected.id);
+    if (result?.success) {
+      setWorldStatusMsg('✓ World imported');
+      await loadWorlds(selected.id);
+    } else if (result?.error && result.error !== 'Cancelled') {
+      setWorldStatusMsg(`❌ ${result.error}`);
+    }
+  }
+
+  async function handleAddServer() {
+    if (!newServerName.trim() || !newServerAddress.trim()) return;
+    const servers = [...(selected.servers || []), { id: uuidv4(), name: newServerName.trim(), address: newServerAddress.trim() }];
+    const updated = { ...selected, servers };
+    await api.saveProfile?.(updated);
+    setSelected(updated);
+    setProfiles(prev => prev.map(p => p.id === updated.id ? updated : p));
+    setNewServerName('');
+    setNewServerAddress('');
+  }
+
+  async function handleRemoveServer(id) {
+    const servers = (selected.servers || []).filter(s => s.id !== id);
+    const updated = { ...selected, servers };
+    await api.saveProfile?.(updated);
+    setSelected(updated);
+    setProfiles(prev => prev.map(p => p.id === updated.id ? updated : p));
+  }
+
   async function handleDuplicate(id) {
     const result = await api.duplicateProfile?.(id);
     if (result?.success) {
@@ -238,6 +281,9 @@ export default function ProfilesPage() {
                     <span className="badge badge-blue">{selected.gameVersion}</span>
                     <span className="badge badge-green">{selected.modLoader || 'Vanilla'}</span>
                     <span className="badge badge-gray">{selected.ram || 4} GB RAM</span>
+                    {formatPlaytime(selected.totalPlaytimeMs) && (
+                      <span className="badge badge-gray">{formatPlaytime(selected.totalPlaytimeMs)}</span>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -269,20 +315,59 @@ export default function ProfilesPage() {
               </div>
 
               {contentTab === 'welten' ? (
-                worlds.length === 0 ? (
-                  <div className="card" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-4)' }}>
-                    <div style={{ fontSize: 28, marginBottom: 8 }}>🌍</div>
-                    <div style={{ fontSize: 13, color: 'var(--text-3)' }}>No worlds yet</div>
-                    <div style={{ fontSize: 11, marginTop: 4 }}>Launch the game with this profile to create a world.</div>
+                <>
+                  <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <button className="btn-ghost" onClick={handleImportWorld}>⬆ Import world</button>
+                    {worldStatusMsg && <span style={{ fontSize: 12, color: worldStatusMsg.startsWith('✓') ? '#3dcc6e' : 'var(--danger)' }}>{worldStatusMsg}</span>}
                   </div>
-                ) : (
-                  worlds.map(w => (
-                    <div key={w.name} className="card" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ fontSize: 24 }}>🌍</div>
-                      <div style={{ fontSize: 13, color: 'var(--text-1)' }}>{w.name}</div>
+                  {worlds.length === 0 ? (
+                    <div className="card" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-4)' }}>
+                      <div style={{ fontSize: 28, marginBottom: 8 }}>🌍</div>
+                      <div style={{ fontSize: 13, color: 'var(--text-3)' }}>No worlds yet</div>
+                      <div style={{ fontSize: 11, marginTop: 4 }}>Launch the game with this profile to create a world.</div>
                     </div>
-                  ))
-                )
+                  ) : (
+                    worlds.map(w => (
+                      <div key={w.name} className="card" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ fontSize: 24 }}>🌍</div>
+                        <div style={{ flex: 1, fontSize: 13, color: 'var(--text-1)' }}>{w.name}</div>
+                        <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => handleExportWorld(w.name)}>⬇ Export</button>
+                      </div>
+                    ))
+                  )}
+                </>
+              ) : contentTab === 'servers' ? (
+                <>
+                  <div className="card" style={{ display: 'flex', gap: 8, padding: 12, marginBottom: 10 }}>
+                    <input className="form-input" style={{ flex: 1, fontSize: 12 }} placeholder="Server name" value={newServerName} onChange={e => setNewServerName(e.target.value)} />
+                    <input className="form-input" style={{ flex: 1, fontSize: 12 }} placeholder="address:port" value={newServerAddress} onChange={e => setNewServerAddress(e.target.value)} />
+                    <button className="btn-primary" style={{ fontSize: 12, padding: '6px 14px' }} onClick={handleAddServer}>+ Add</button>
+                  </div>
+                  {(!selected.servers || selected.servers.length === 0) ? (
+                    <div className="card" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-4)' }}>
+                      <div style={{ fontSize: 12 }}>No saved servers yet.</div>
+                    </div>
+                  ) : (
+                    selected.servers.map(s => (
+                      <div key={s.id} className="card" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ fontSize: 18 }}>🖧</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, color: 'var(--text-1)' }}>{s.name}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{s.address}</div>
+                        </div>
+                        <button
+                          className="btn-primary"
+                          style={{ padding: '4px 10px', fontSize: 11 }}
+                          onClick={() => play(selected, s.address)}
+                          disabled={launching || runningProfileIds.has(selected.id)}
+                        >
+                          ▶ Join
+                        </button>
+                        <button className="btn-danger" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => handleRemoveServer(s.id)}>✕</button>
+                      </div>
+                    ))
+                  )}
+                </>
               ) : contentTab === 'screenshots' ? (
                 screenshots.length === 0 ? (
                   <div className="card" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-4)' }}>
