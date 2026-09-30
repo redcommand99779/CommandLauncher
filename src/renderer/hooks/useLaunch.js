@@ -24,6 +24,7 @@ export default function useLaunch() {
   const play = (profile) => run(profile, 'launch', (p) => api.launchMinecraft?.({ profile: p }));
   const prepare = (profile) => run(profile, 'prepare', (p) => api.prepareLoader?.(p));
   const installModpack = (params) => run(params, 'modpack', (p) => api.installModpack?.(p));
+  const installModpackCF = (params) => run(params, 'modpack', (p) => api.curseforgeInstallModpack?.(p));
 
-  return { launching, mode, result, play, prepare, installModpack };
+  return { launching, mode, result, play, prepare, installModpack, installModpackCF };
 }

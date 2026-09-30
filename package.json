@@ -1,6 +1,6 @@
 {
   "name": "command-launcher",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Command Launcher - Minecraft Launcher",
   "main": "src/main/main.js",
@@ -45,6 +45,7 @@
     "files": [
       "build/**/*",
       "src/main/**/*",
+      "src/main/.env",
       "package.json"
     ],
     "directories": {

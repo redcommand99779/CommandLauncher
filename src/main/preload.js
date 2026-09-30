@@ -33,6 +33,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   modrinthRemoveMod: (params) => ipcRenderer.invoke('modrinth:removeMod', params),
   installModpack: (params) => ipcRenderer.invoke('modrinth:installModpack', params),
 
+  // CurseForge
+  curseforgeSearch: (params) => ipcRenderer.invoke('curseforge:search', params),
+  curseforgeGetFiles: (params) => ipcRenderer.invoke('curseforge:getFiles', params),
+  curseforgeDownloadFile: (params) => ipcRenderer.invoke('curseforge:downloadFile', params),
+  curseforgeInstallModpack: (params) => ipcRenderer.invoke('curseforge:installModpack', params),
+
   // Launch
   launchMinecraft: (params) => ipcRenderer.invoke('minecraft:launch', params),
 

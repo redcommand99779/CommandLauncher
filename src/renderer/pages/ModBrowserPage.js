@@ -25,7 +25,8 @@ export default function ModBrowserPage() {
   const [statusMsg, setStatusMsg] = useState('');
   const [offset, setOffset] = useState(0);
   const [totalHits, setTotalHits] = useState(0);
-  const { installModpack } = useLaunch();
+  const [source, setSource] = useState('modrinth'); // 'modrinth' | 'curseforge'
+  const { installModpack, installModpackCF } = useLaunch();
 
   const isModpackTab = contentType === 'modpack';
   const activeProfile = profiles.find(p => p.id === profileId) || null;
@@ -45,7 +46,7 @@ export default function ModBrowserPage() {
   useEffect(() => {
     if (isModpackTab || (!needsLoader && !noProfilesYet)) doSearch(0);
     else { setResults([]); setTotalHits(0); }
-  }, [contentType, activeProfile?.id]);
+  }, [contentType, activeProfile?.id, source]);
 
   async function loadInstalled() {
     const items = await api.getProfileMods?.(activeProfile.id, subFolder) || [];
@@ -56,21 +57,55 @@ export default function ModBrowserPage() {
     if (!isModpackTab && (!activeProfile || needsLoader)) return;
     setLoading(true);
     try {
-      const loaders = contentType === 'mod' ? (LOADER_SLUGS[activeProfile.modLoader] || []) : [];
-      const res = await api.modrinthSearch?.({
-        query,
-        gameVersion: isModpackTab ? '' : activeProfile.gameVersion,
-        loaders,
-        limit: 20,
-        offset: newOffset,
-        projectType: contentType,
-      });
+      let res;
+      if (source === 'curseforge') {
+        res = await api.curseforgeSearch?.({
+          query,
+          gameVersion: isModpackTab ? '' : activeProfile.gameVersion,
+          modLoader: contentType === 'mod' ? activeProfile.modLoader : undefined,
+          limit: 20,
+          offset: newOffset,
+          projectType: contentType,
+        });
+      } else {
+        const loaders = contentType === 'mod' ? (LOADER_SLUGS[activeProfile.modLoader] || []) : [];
+        res = await api.modrinthSearch?.({
+          query,
+          gameVersion: isModpackTab ? '' : activeProfile.gameVersion,
+          loaders,
+          limit: 20,
+          offset: newOffset,
+          projectType: contentType,
+        });
+      }
       if (res?.hits) { setResults(res.hits); setTotalHits(res.total_hits || 0); setOffset(newOffset); }
       else { setResults([]); setTotalHits(0); }
     } finally { setLoading(false); }
-  }, [query, contentType, activeProfile?.id, needsLoader, isModpackTab]);
+  }, [query, contentType, activeProfile?.id, needsLoader, isModpackTab, source]);
 
   async function installMod(item) {
+    if (source === 'curseforge') {
+      const files = await api.curseforgeGetFiles?.({
+        modId: item.project_id,
+        gameVersion: activeProfile.gameVersion,
+        modLoader: contentType === 'mod' ? activeProfile.modLoader : undefined,
+      });
+      const file = files?.[0];
+      if (!file) { setStatusMsg('❌ No compatible version found.'); return; }
+
+      setStatusMsg(`⬇ Downloading ${item.title}...`);
+      const result = await api.curseforgeDownloadFile?.({
+        url: file.downloadUrl, filename: file.fileName, profileId: activeProfile.id, subFolder,
+      });
+      if (result?.success) {
+        setInstalledItems(p => [...p, file.fileName]);
+        setStatusMsg(`✓ ${item.title} installed!`);
+      } else {
+        setStatusMsg(`❌ Error: ${result?.error || 'Unknown'}`);
+      }
+      return;
+    }
+
     const loaders = contentType === 'mod' ? (LOADER_SLUGS[activeProfile.modLoader] || []) : [];
     const versions = await api.modrinthGetVersions?.({
       projectId: item.project_id || item.slug,
@@ -96,6 +131,21 @@ export default function ModBrowserPage() {
   }
 
   async function installPack(item) {
+    if (source === 'curseforge') {
+      const files = await api.curseforgeGetFiles?.({ modId: item.project_id });
+      const file = files?.[0];
+      if (!file) { setStatusMsg('❌ No version found.'); return; }
+
+      const result = await installModpackCF({ modId: item.project_id, fileId: file.id, packName: item.title });
+      if (result?.success) {
+        setStatusMsg(`✓ "${item.title}" installed as a new profile!`);
+        await loadProfiles();
+      } else {
+        setStatusMsg(`❌ Error: ${result?.error || 'Unknown'}`);
+      }
+      return;
+    }
+
     const versions = await api.modrinthGetVersions?.({ projectId: item.project_id || item.slug, gameVersion: '', loaders: [] });
     if (!versions?.length) { setStatusMsg('❌ No version found.'); return; }
     const ver = versions[0];
@@ -154,7 +204,17 @@ export default function ModBrowserPage() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-4)' }}>🟢 Modrinth</div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[['modrinth', '🟢 Modrinth'], ['curseforge', '🔥 CurseForge']].map(([id, label]) => (
+              <button key={id} onClick={() => setSource(id)} style={{
+                padding: '4px 10px', borderRadius: 6, fontSize: 11,
+                border: `0.5px solid ${source === id ? 'var(--accent)' : 'var(--border)'}`,
+                background: source === id ? '#1e3a5f' : 'var(--bg-2)',
+                color: source === id ? 'var(--accent-light)' : 'var(--text-4)',
+                cursor: 'pointer',
+              }}>{label}</button>
+            ))}
+          </div>
           {!isModpackTab && profiles.length > 0 && (
             <select className="form-select" value={profileId} onChange={e => setProfileId(e.target.value)} style={{ fontSize: 12 }}>
               {profiles.map(p => <option key={p.id} value={p.id}>{p.name} · {p.gameVersion} · {p.modLoader || 'Vanilla'}</option>)}

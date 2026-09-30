@@ -12,6 +12,29 @@ const { launchMinecraft } = require('./customLaunch');
 
 const isDev = process.env.NODE_ENV === 'development';
 
+// Minimal .env loader (no dotenv dependency): keeps the CurseForge API key out
+// of the public source tree while still shipping with the packaged app.
+function loadEnvFile(envPath) {
+  try {
+    const content = fs.readFileSync(envPath, 'utf8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      const value = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+      if (!(key in process.env)) process.env[key] = value;
+    }
+  } catch {}
+}
+loadEnvFile(path.join(__dirname, '.env'));
+
+const CURSEFORGE_API_KEY = process.env.CURSEFORGE_API_KEY || '';
+const CURSEFORGE_GAME_ID = 432;
+const CURSEFORGE_CLASS_IDS = { mod: 6, resourcepack: 12, shader: 6552, datapack: 6945, modpack: 4471 };
+const CURSEFORGE_LOADER_IDS = { Fabric: 4, Forge: 1, Quilt: 5, NeoForge: 6 };
+
 // ── Paths ────────────────────────────────────────────────────────────────
 const DATA_DIR = path.join(app.getPath('userData'), 'CommandLauncher');
 const PROFILES_DIR = path.join(DATA_DIR, 'profiles');
@@ -261,6 +284,161 @@ ipcMain.handle('modrinth:removeMod', (_, { filename, profileId, subFolder = 'mod
   return { success: true };
 });
 
+// ── CurseForge API ───────────────────────────────────────────────────────
+function curseforgeGet(pathAndQuery) {
+  return httpGet(`https://api.curseforge.com${pathAndQuery}`, {
+    'x-api-key': CURSEFORGE_API_KEY,
+    'Accept': 'application/json',
+  });
+}
+
+async function curseforgeGetFilesBulk(fileIds) {
+  if (!fileIds.length) return [];
+  const res = await httpPostJson('https://api.curseforge.com/v1/mods/files', {
+    'x-api-key': CURSEFORGE_API_KEY,
+    'Accept': 'application/json',
+  }, { fileIds });
+  return res.data || [];
+}
+
+ipcMain.handle('curseforge:search', async (_, { query, gameVersion, modLoader, limit = 20, offset = 0, projectType = 'mod' }) => {
+  const classId = CURSEFORGE_CLASS_IDS[projectType] || 6;
+  const params = new URLSearchParams({
+    gameId: String(CURSEFORGE_GAME_ID),
+    classId: String(classId),
+    searchFilter: query || '',
+    pageSize: String(limit),
+    index: String(offset),
+    sortField: '2',
+    sortOrder: 'desc',
+  });
+  if (gameVersion) params.set('gameVersion', gameVersion);
+  if (modLoader && projectType === 'mod' && CURSEFORGE_LOADER_IDS[modLoader]) {
+    params.set('modLoaderType', String(CURSEFORGE_LOADER_IDS[modLoader]));
+  }
+  const res = await curseforgeGet(`/v1/mods/search?${params}`);
+  return {
+    hits: (res.data || []).map(m => ({
+      project_id: String(m.id),
+      slug: m.slug,
+      title: m.name,
+      description: m.summary,
+      icon_url: m.logo?.thumbnailUrl,
+      downloads: m.downloadCount,
+      categories: (m.categories || []).map(c => c.name),
+    })),
+    total_hits: res.pagination?.totalCount || 0,
+  };
+});
+
+ipcMain.handle('curseforge:getFiles', async (_, { modId, gameVersion, modLoader }) => {
+  const params = new URLSearchParams({ pageSize: '20' });
+  if (gameVersion) params.set('gameVersion', gameVersion);
+  if (modLoader && CURSEFORGE_LOADER_IDS[modLoader]) params.set('modLoaderType', String(CURSEFORGE_LOADER_IDS[modLoader]));
+  const res = await curseforgeGet(`/v1/mods/${modId}/files?${params}`);
+  return (res.data || []).map(f => ({ id: f.id, fileName: f.fileName, downloadUrl: f.downloadUrl }));
+});
+
+ipcMain.handle('curseforge:downloadFile', async (_, { url, filename, profileId, subFolder = 'mods' }) => {
+  if (!url) return { success: false, error: 'No download link available for this file (author disabled 3rd-party downloads)' };
+  const destDir = path.join(PROFILES_DIR, profileId, subFolder);
+  fs.ensureDirSync(destDir);
+  const destPath = path.join(destDir, filename);
+  try {
+    await downloadFile(url, destPath);
+    return { success: true, path: destPath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('curseforge:installModpack', async (_, { modId, fileId, packName, ram }) => {
+  await openLogWindow(`Installing modpack "${packName}"...`);
+  const send = sendLog;
+
+  const tmpDir = path.join(app.getPath('temp'), `command-launcher-cfpack-${Date.now()}`);
+  fs.ensureDirSync(tmpDir);
+
+  try {
+    send('Fetching modpack file info...');
+    const [fileInfo] = await curseforgeGetFilesBulk([fileId]);
+    if (!fileInfo?.downloadUrl) throw new Error('No download link available for this modpack file');
+
+    const packZipPath = path.join(tmpDir, fileInfo.fileName);
+    send(`Downloading modpack "${packName}"...`);
+    await downloadFile(fileInfo.downloadUrl, packZipPath);
+
+    send('Extracting modpack...');
+    const extractDir = path.join(tmpDir, 'extracted');
+    new AdmZip(packZipPath).extractAllTo(extractDir, true);
+
+    const manifestPath = path.join(extractDir, 'manifest.json');
+    if (!fs.existsSync(manifestPath)) throw new Error('manifest.json is missing from the modpack');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+    const gameVersion = manifest.minecraft?.version;
+    if (!gameVersion) throw new Error('No Minecraft version specified in the modpack');
+    const loaderEntry = (manifest.minecraft?.modLoaders || []).find(l => l.primary) || manifest.minecraft?.modLoaders?.[0];
+    let modLoader = 'Vanilla';
+    if (loaderEntry?.id?.startsWith('fabric-')) modLoader = 'Fabric';
+    else if (loaderEntry?.id?.startsWith('forge-')) modLoader = 'Forge';
+    else if (loaderEntry?.id?.startsWith('quilt-')) modLoader = 'Quilt';
+    else if (loaderEntry?.id?.startsWith('neoforge-')) modLoader = 'NeoForge';
+
+    const profileId = uuidv4();
+    const profileDir = path.join(PROFILES_DIR, profileId);
+    fs.ensureDirSync(path.join(profileDir, 'saves'));
+
+    const entries = manifest.files || [];
+    send(`Resolving download links for ${entries.length} mods...`);
+    const fileIds = entries.map(f => f.fileID);
+    const resolvedFiles = [];
+    for (let i = 0; i < fileIds.length; i += 50) {
+      resolvedFiles.push(...(await curseforgeGetFilesBulk(fileIds.slice(i, i + 50))));
+    }
+    const byId = new Map(resolvedFiles.map(f => [f.id, f]));
+
+    const modsDir = path.join(profileDir, 'mods');
+    fs.ensureDirSync(modsDir);
+    let completed = 0;
+    await runWithConcurrency(entries, 8, async (entry) => {
+      const f = byId.get(entry.fileID);
+      if (!f?.downloadUrl) { send(`Skipping mod without download link (fileID ${entry.fileID})`, 'info'); return; }
+      const destPath = path.join(modsDir, f.fileName);
+      await downloadFile(f.downloadUrl, destPath);
+      completed++;
+      send(`Mod ${completed}/${entries.length}: ${f.fileName}`);
+    });
+
+    const src = path.join(extractDir, manifest.overrides || 'overrides');
+    if (fs.existsSync(src)) fs.copySync(src, profileDir);
+
+    const profile = {
+      id: profileId,
+      name: packName,
+      gameVersion,
+      modLoader,
+      ram: ram || 4,
+      icon: '🗂',
+      createdAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(path.join(PROFILES_DIR, `${profileId}.json`), JSON.stringify(profile, null, 2));
+
+    if (modLoader !== 'Vanilla') {
+      await prepareLoaderForProfile(profile, send);
+    }
+
+    send(`Modpack "${packName}" installed as a new profile.`, 'success');
+    return { success: true, profile };
+  } catch (e) {
+    console.error('[cf-modpack:error]', e);
+    send(`Error: ${e.message}`, 'error');
+    return { success: false, error: e.message };
+  } finally {
+    fs.removeSync(tmpDir);
+  }
+});
+
 // Installs the profile's mod loader (if any) and returns the launch-relevant
 // identifiers. Shared by profiles:prepareLoader (run at profile save time, so
 // "Play" launches instantly) and minecraft:launch (safety-net fallback in
@@ -507,6 +685,30 @@ function httpGet(url, headers = {}) {
     });
     req.on('error', reject);
     req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
+  });
+}
+
+function httpPostJson(url, headers, bodyObj) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const body = JSON.stringify(bodyObj);
+    const opts = {
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), ...headers },
+    };
+    const req = mod.request(opts, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { resolve(data); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
 }
 
