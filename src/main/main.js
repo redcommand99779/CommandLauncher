@@ -44,6 +44,8 @@ fs.ensureDirSync(DATA_DIR);
 fs.ensureDirSync(PROFILES_DIR);
 fs.ensureDirSync(VERSIONS_DIR);
 
+const APP_ICON_PATH = path.join(__dirname, '../../assets/icon.png');
+
 let mainWindow;
 let logWindow = null;
 const runningProcesses = new Map(); // profileId -> child process
@@ -67,6 +69,7 @@ function openLogWindow(title) {
       height: 420,
       title,
       backgroundColor: '#0f1117',
+      icon: APP_ICON_PATH,
       autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, 'logWindowPreload.js'),
@@ -96,6 +99,7 @@ function createWindow() {
     minHeight: 600,
     frame: false,
     backgroundColor: '#0f1117',
+    icon: APP_ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
