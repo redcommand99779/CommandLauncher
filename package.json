@@ -1,6 +1,6 @@
 {
   "name": "command-launcher",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Command Launcher - Minecraft Launcher",
   "author": "redcommand99779",
@@ -14,6 +14,7 @@
     "release": "npm run build && electron-builder --publish always"
   },
   "dependencies": {
+    "@xhayper/discord-rpc": "^1.5.1",
     "adm-zip": "^0.5.18",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",

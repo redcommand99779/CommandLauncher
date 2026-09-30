@@ -67,6 +67,17 @@ export default function SettingsPage() {
         </div>
 
         <div className="form-group">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-2)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={settings.discordRpcEnabled}
+              onChange={e => set('discordRpcEnabled', e.target.checked)}
+            />
+            Show what you're playing on Discord (Rich Presence)
+          </label>
+        </div>
+
+        <div className="form-group">
           <label className="form-label">Java path override (optional)</label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input

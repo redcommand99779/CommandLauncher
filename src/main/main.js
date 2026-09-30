@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const AdmZip = require('adm-zip');
 const { autoUpdater } = require('electron-updater');
+const { Client: DiscordRPCClient } = require('@xhayper/discord-rpc');
 const { microsoftLogin, getValidAccount, logout } = require('./auth');
 const { launchMinecraft } = require('./customLaunch');
 
@@ -36,6 +37,10 @@ const CURSEFORGE_GAME_ID = 432;
 const CURSEFORGE_CLASS_IDS = { mod: 6, resourcepack: 12, shader: 6552, datapack: 6945, modpack: 4471 };
 const CURSEFORGE_LOADER_IDS = { Fabric: 4, Forge: 1, Quilt: 5, NeoForge: 6 };
 
+// Public application identifier (not a secret, same as any Discord RPC-enabled
+// app) — set once via the Discord Developer Portal. Empty until configured.
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || '';
+
 // ── Paths ────────────────────────────────────────────────────────────────
 const DATA_DIR = path.join(app.getPath('userData'), 'CommandLauncher');
 const PROFILES_DIR = path.join(DATA_DIR, 'profiles');
@@ -51,6 +56,7 @@ const DEFAULT_SETTINGS = {
   defaultRam: 4,
   onLaunchAction: 'minimize', // 'minimize' | 'none'
   javaPathOverride: '',
+  discordRpcEnabled: true,
 };
 
 function loadSettings() {
@@ -142,9 +148,37 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
   setupAutoUpdater();
+  setupDiscordRPC();
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+
+// ── Discord Rich Presence ───────────────────────────────────────────────
+// Entirely best-effort: Discord may not be running, the user may have the
+// feature disabled, or DISCORD_CLIENT_ID may not be configured yet — none
+// of that should ever affect the rest of the app, so every call is wrapped.
+let discordRpc = null;
+
+function setupDiscordRPC() {
+  if (!DISCORD_CLIENT_ID || !loadSettings().discordRpcEnabled) return;
+  try {
+    discordRpc = new DiscordRPCClient({ clientId: DISCORD_CLIENT_ID });
+    discordRpc.on('ready', () => {
+      setDiscordPresence({ details: 'Browsing profiles', startTimestamp: Date.now() });
+    });
+    discordRpc.login().catch(() => {}); // Discord not running — fine, just no presence
+  } catch {}
+}
+
+function setDiscordPresence(activity) {
+  if (!discordRpc?.user) return;
+  discordRpc.user.setActivity(activity).catch(() => {});
+}
+
+function clearDiscordPresence() {
+  if (!discordRpc?.user) return;
+  discordRpc.user.clearActivity().catch(() => {});
+}
 
 // ── Auto-Update (GitHub Releases via electron-builder/electron-updater) ────
 function setupAutoUpdater() {
@@ -217,6 +251,27 @@ ipcMain.handle('profiles:delete', (_, profileId) => {
   return { success: true };
 });
 
+ipcMain.handle('profiles:duplicate', (_, profileId) => {
+  const srcFile = path.join(PROFILES_DIR, `${profileId}.json`);
+  const srcDir = path.join(PROFILES_DIR, profileId);
+  if (!fs.existsSync(srcFile)) return { success: false, error: 'Profile not found' };
+
+  const original = JSON.parse(fs.readFileSync(srcFile, 'utf8'));
+  const newId = uuidv4();
+  const newProfile = { ...original, id: newId, name: `${original.name} (Copy)`, createdAt: new Date().toISOString() };
+  const destDir = path.join(PROFILES_DIR, newId);
+
+  // Copy mods/resourcepacks/etc. but not saved worlds — cloning is for testing
+  // configs, not for duplicating potentially large save data.
+  if (fs.existsSync(srcDir)) {
+    fs.copySync(srcDir, destDir, { filter: (src) => !src.includes(path.join(srcDir, 'saves')) });
+  }
+  fs.ensureDirSync(path.join(destDir, 'saves'));
+  fs.writeFileSync(path.join(PROFILES_DIR, `${newId}.json`), JSON.stringify(newProfile, null, 2));
+
+  return { success: true, profile: newProfile };
+});
+
 ipcMain.handle('profiles:getWorlds', (_, profileId) => {
   const savesDir = path.join(PROFILES_DIR, profileId, 'saves');
   fs.ensureDirSync(savesDir);
@@ -242,6 +297,31 @@ ipcMain.handle('profiles:getMods', (_, profileId, subFolder = 'mods') => {
       .filter(f => !fs.statSync(path.join(dir, f)).isDirectory())
       .map(f => ({ filename: f, size: fs.statSync(path.join(dir, f)).size, subFolder }));
   } catch { return []; }
+});
+
+// ── Screenshots (<profileDir>/screenshots, since gameDirectory === profileDir) ─
+ipcMain.handle('profiles:getScreenshots', (_, profileId) => {
+  const dir = path.join(PROFILES_DIR, profileId, 'screenshots');
+  try {
+    return fs.readdirSync(dir)
+      .filter(f => /\.png$/i.test(f))
+      .map(f => {
+        const fullPath = path.join(dir, f);
+        const stat = fs.statSync(fullPath);
+        return { filename: f, path: fullPath, url: `file://${fullPath.replace(/\\/g, '/')}`, mtime: stat.mtimeMs, size: stat.size };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch { return []; }
+});
+
+ipcMain.handle('profiles:openScreenshot', (_, filePath) => {
+  shell.openPath(filePath);
+  return { success: true };
+});
+
+ipcMain.handle('profiles:deleteScreenshot', (_, filePath) => {
+  try { if (fs.existsSync(filePath)) fs.removeSync(filePath); return { success: true }; }
+  catch (e) { return { success: false, error: e.message }; }
 });
 
 // ── Crash Logs (hs_err_pid*.log, written via customLaunch's -XX:ErrorFile) ─
@@ -286,7 +366,12 @@ ipcMain.handle('profiles:listRunning', () => [...runningProcesses.keys()]);
 
 // ── Settings ─────────────────────────────────────────────────────────────
 ipcMain.handle('settings:get', () => loadSettings());
-ipcMain.handle('settings:save', (_, settings) => saveSettings(settings));
+ipcMain.handle('settings:save', (_, settings) => {
+  const merged = saveSettings(settings);
+  if (merged.discordRpcEnabled && !discordRpc) setupDiscordRPC();
+  else if (!merged.discordRpcEnabled && discordRpc) { clearDiscordPresence(); discordRpc.destroy().catch(() => {}); discordRpc = null; }
+  return merged;
+});
 ipcMain.handle('settings:pickJavaPath', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select javaw.exe',
@@ -891,6 +976,7 @@ ipcMain.handle('minecraft:launch', async (_, { profile }) => {
       emitter.on('close', (code) => {
         send(`Minecraft exited (code ${code})`, 'info');
         setProfileRunning(profile.id, false);
+        setDiscordPresence({ details: 'Browsing profiles', startTimestamp: Date.now() });
       });
     });
 
@@ -900,6 +986,11 @@ ipcMain.handle('minecraft:launch', async (_, { profile }) => {
     }
 
     setProfileRunning(profile.id, true);
+    setDiscordPresence({
+      details: `Playing ${profile.gameVersion}`,
+      state: loaderName !== 'Vanilla' ? `${loaderName} · ${profile.name}` : profile.name,
+      startTimestamp: Date.now(),
+    });
     send('Minecraft launched.', 'success');
     return { success: true };
   } catch (e) {

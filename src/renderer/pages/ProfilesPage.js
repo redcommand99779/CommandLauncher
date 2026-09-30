@@ -13,6 +13,7 @@ const CONTENT_TABS = [
   { id: 'shaders', label: 'Shaders', subFolder: 'shaderpacks', needsLoader: false },
   { id: 'datapacks', label: 'Datapacks', subFolder: 'datapacks', needsLoader: false },
   { id: 'welten', label: 'Worlds', subFolder: null, needsLoader: false },
+  { id: 'screenshots', label: 'Screenshots', subFolder: null, needsLoader: false },
   { id: 'crashes', label: 'Crashes', subFolder: null, needsLoader: false },
 ];
 
@@ -30,6 +31,7 @@ export default function ProfilesPage() {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [applyingUpdate, setApplyingUpdate] = useState({});
   const [crashLogs, setCrashLogs] = useState([]);
+  const [screenshots, setScreenshots] = useState([]);
   const { launching, play, prepare } = useLaunch();
   const runningProfileIds = useRunningProfiles();
 
@@ -45,6 +47,7 @@ export default function ProfilesPage() {
 
   useEffect(() => {
     if (selected && contentTab === 'crashes') loadCrashLogs(selected.id);
+    else if (selected && contentTab === 'screenshots') loadScreenshots(selected.id);
     else if (selected && contentTab !== 'welten') loadFolderItems(selected.id, contentTab);
     setUpdateResults(null);
   }, [selected?.id, contentTab]);
@@ -84,6 +87,16 @@ export default function ProfilesPage() {
   async function handleDeleteCrashLog(logPath) {
     await api.deleteCrashLog?.(logPath);
     await loadCrashLogs(selected.id);
+  }
+
+  async function loadScreenshots(id) {
+    const shots = await api.getScreenshots?.(id) || [];
+    setScreenshots(shots);
+  }
+
+  async function handleDeleteScreenshot(filePath) {
+    await api.deleteScreenshot?.(filePath);
+    await loadScreenshots(selected.id);
   }
 
   async function handleRemoveItem(filename) {
@@ -158,6 +171,14 @@ export default function ProfilesPage() {
     await loadProfiles();
   }
 
+  async function handleDuplicate(id) {
+    const result = await api.duplicateProfile?.(id);
+    if (result?.success) {
+      await loadProfiles();
+      setSelected(result.profile);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ width: 240, borderRight: '0.5px solid var(--border)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
@@ -220,6 +241,7 @@ export default function ProfilesPage() {
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button className="btn-ghost" onClick={() => api.openProfileFolder?.(selected.id)}>📂 Folder</button>
+                  <button className="btn-ghost" onClick={() => handleDuplicate(selected.id)} disabled={launching}>⧉ Duplicate</button>
                   <button className="btn-ghost" onClick={() => openEdit(selected)} disabled={launching}>✎ Edit</button>
                   <button
                     className="btn-primary"
@@ -259,6 +281,31 @@ export default function ProfilesPage() {
                       <div style={{ fontSize: 13, color: 'var(--text-1)' }}>{w.name}</div>
                     </div>
                   ))
+                )
+              ) : contentTab === 'screenshots' ? (
+                screenshots.length === 0 ? (
+                  <div className="card" style={{ textAlign: 'center', padding: '30px 20px', color: 'var(--text-4)' }}>
+                    <div style={{ fontSize: 28, marginBottom: 8 }}>📷</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-3)' }}>No screenshots yet</div>
+                    <div style={{ fontSize: 11, marginTop: 4 }}>Press F2 in-game to take one.</div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+                    {screenshots.map(s => (
+                      <div key={s.filename} className="card" style={{ padding: 6, overflow: 'hidden' }}>
+                        <img
+                          src={s.url}
+                          alt={s.filename}
+                          onClick={() => api.openScreenshot?.(s.path)}
+                          style={{ width: '100%', height: 100, objectFit: 'cover', borderRadius: 6, cursor: 'pointer', display: 'block' }}
+                        />
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                          <div style={{ fontSize: 10, color: 'var(--text-4)' }}>{new Date(s.mtime).toLocaleDateString()}</div>
+                          <button className="btn-danger" style={{ padding: '2px 6px', fontSize: 10 }} onClick={() => handleDeleteScreenshot(s.path)}>✕</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )
               ) : contentTab === 'crashes' ? (
                 crashLogs.length === 0 ? (
