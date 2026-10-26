@@ -163,7 +163,13 @@ export default function SettingsPage() {
             style={{ fontSize: 12, color: 'var(--accent-light)', cursor: 'pointer' }}
             onClick={() => api.openExternal?.('https://discord.gg/yM2PSGxW2K')}
           >
-            💬 Join the Discord — report bugs, suggest features
+            💬 Join the Discord — support, tickets, feature suggestions
+          </div>
+          <div
+            style={{ fontSize: 12, color: 'var(--accent-light)', cursor: 'pointer' }}
+            onClick={() => api.openExternal?.('https://github.com/redcommand99779/CommandLauncher/issues/new/choose')}
+          >
+            🐞 Report a bug on GitHub
           </div>
         </div>
       </div>
